@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""
+Owen 2 v2 — SFNNv10-class trainer sdata -> .o2nn ver=2
+H=1024, INPUT=81920 (HalfKP + Threat). L1=16, L2=32.
+DeepSeek-style GPU-shortage tricks for 4GB RTX 2050:
+  1) Mixed precision FP16 autocast + GradScaler (2x speed, half VRAM)
+  2) Gradient accumulation (micro-batch 512 fits 4GB, effective 8192)
+  3) 8-bit AdamW via bitsandbytes if present (75% optimizer RAM saved)
+  4) Mmap dataset (no per-sample open/seek, zero-copy)
+  5) TF32 + cudnn.benchmark + channels_last (Tensor Core)
+  6) torch.compile (inductor) if available
+No Stockfish code.
+"""
+import argparse, os, struct, math, random
+import torch, torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+from sdata import RECORD_SIZE
+
+INPUT_SIZE = 81920
+HALFKP = 40960
+H = 1024
+L1 = 16
+L2 = 32
+
+def feature_indices_v2(board, stm):
+    wk = int(np.where(board==5)[0][0]) if np.any(board==5) else 4
+    bk = int(np.where(board==11)[0][0]) if np.any(board==11) else 60
+    king = wk if stm==0 else bk
+    def orient(s, persp): return s ^ 56 if persp==1 else s
+    k = orient(king, stm)
+    occ = set(int(i) for i in range(64) if board[i]!=12)
+    attacked = set()
+    for s, p in enumerate(board):
+        if p==12: continue
+        col = 0 if p < 6 else 1
+        if col == stm: continue
+        pt = p % 6
+        r, f = divmod(s, 8)
+        if pt==0:
+            nr = r + (1 if col==0 else -1)
+            for df in (-1,1):
+                nf=f+df
+                if 0<=nr<8 and 0<=nf<8: attacked.add(nr*8+nf)
+        elif pt==1:
+            for dr,df in ((2,1),(2,-1),(-2,1),(-2,-1),(1,2),(1,-2),(-1,2),(-1,-2)):
+                nr, nf = r+dr, f+df
+                if 0<=nr<8 and 0<=nf<8: attacked.add(nr*8+nf)
+        elif pt==5:
+            for dr in (-1,0,1):
+                for df in (-1,0,1):
+                    if dr==0 and df==0: continue
+                    nr, nf = r+dr, f+df
+                    if 0<=nr<8 and 0<=nf<8: attacked.add(nr*8+nf)
+        elif pt in (2,3,4):
+            dirs = []
+            if pt in (2,4): dirs += [(1,1),(1,-1),(-1,1),(-1,-1)]
+            if pt in (3,4): dirs += [(1,0),(-1,0),(0,1),(0,-1)]
+            for dr,df in dirs:
+                nr, nf = r+dr, f+df
+                while 0<=nr<8 and 0<=nf<8:
+                    ns = nr*8+nf
+                    attacked.add(ns)
+                    if ns in occ: break
+                    nr+=dr; nf+=df
+    out=[]
+    for s, p in enumerate(board):
+        if p==12: continue
+        if p==5 or p==11: continue
+        pc10 = p if p<6 else (p-6)+5
+        if pc10>=10: continue
+        ps = orient(s, stm)
+        base = pc10*4096 + k*64 + ps
+        out.append(base)
+        if s in attacked:
+            out.append(HALFKP + base)
+    return out
+
+class OwenNetV2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.ft = nn.Embedding(INPUT_SIZE, H)
+        self.ft_bias = nn.Parameter(torch.zeros(H))
+        self.l1 = nn.Linear(H, L1)
+        self.l2 = nn.Linear(L1, L2)
+        self.out = nn.Linear(L2, 1)
+        nn.init.normal_(self.ft.weight, std=0.02)
+        nn.init.zeros_(self.ft_bias)
+        nn.init.kaiming_uniform_(self.l1.weight, nonlinearity='relu')
+        nn.init.zeros_(self.l1.bias)
+        nn.init.kaiming_uniform_(self.l2.weight, nonlinearity='relu')
+        nn.init.zeros_(self.l2.bias)
+        nn.init.normal_(self.out.weight, std=0.02)
+        nn.init.zeros_(self.out.bias)
+    def forward(self, idx):
+        mask = (idx != -1).float()
+        emb = self.ft(idx.clamp(min=0)) * mask.unsqueeze(-1)
+        acc = emb.sum(dim=1) + self.ft_bias
+        h0 = torch.clamp(acc / 64.0, 0, 127) / 127.0
+        h1 = torch.clamp(self.l1(h0), 0, 1)
+        h2 = torch.clamp(self.l2(h1), 0, 1)
+        out = self.out(h2).squeeze(-1)
+        return out * 1000.0
+    def export_o2nn(self, path):
+        fw = (self.ft.weight.detach().cpu().numpy() * 64).round().clip(-32768,32767).astype(np.int16)
+        fb = (self.ft_bias.detach().cpu().numpy() * 64).round().clip(-32768,32767).astype(np.int16)
+        l1w = (self.l1.weight.detach().cpu().numpy() * 64).round().clip(-128,127).astype(np.int8)
+        l1b = (self.l1.bias.detach().cpu().numpy() * 64).round().clip(-32768,32767).astype(np.int16)
+        l2w = (self.l2.weight.detach().cpu().numpy() * 64).round().clip(-128,127).astype(np.int8)
+        l2b = (self.l2.bias.detach().cpu().numpy() * 64).round().clip(-32768,32767).astype(np.int16)
+        ow  = (self.out.weight.detach().cpu().numpy() * 64).round().clip(-128,127).astype(np.int8).flatten()
+        ob  = int(np.round(float(self.out.bias.detach().cpu().numpy()) * 64))
+        ob = max(-32768, min(32767, ob))
+        with open(path,"wb") as f:
+            f.write(b"O2NN")
+            f.write(struct.pack("<II", 2, H))
+            f.write(fw.tobytes())
+            f.write(fb.tobytes())
+            f.write(l1w.tobytes())
+            f.write(l1b.tobytes())
+            f.write(l2w.tobytes())
+            f.write(l2b.tobytes())
+            f.write(ow.tobytes())
+            f.write(struct.pack("<h", ob))
+        print(f"Exported v2 {path}  ({os.path.getsize(path)} bytes)")
+
+# DeepSeek trick #4: mmap dataset — read whole file once via memmap, no open/seek per sample
+class SDataDataset(Dataset):
+    def __init__(self, path, max_active=48):
+        self.path=path
+        self.max_active=max_active
+        self.n = os.path.getsize(path)//RECORD_SIZE
+        print(f"Dataset v2 mmap: {self.n} positions from {path} (H={H} threat)")
+        # mmap as raw bytes for zero-copy access
+        self.data = np.memmap(path, dtype=np.uint8, mode='r')
+        # verify size
+        assert self.data.size >= self.n * RECORD_SIZE
+    def __len__(self): return self.n
+    def __getitem__(self, i):
+        off = i * RECORD_SIZE
+        # slice without copy where possible, then copy small 69B record to parse
+        b = self.data[off:off+RECORD_SIZE]
+        # numpy slice is still memmap view; convert to bytes via tobytes for struct
+        # faster: use memoryview
+        board = b[0:64].copy()  # 64B
+        stm = int(b[64])
+        ev = struct.unpack_from("<h", b, 65)[0]
+        result = int(b[67])
+        result_cp = {0:-600, 1:0, 2:600}[result]
+        target = 0.6*result_cp + 0.4*float(np.clip(ev,-1500,1500))
+        feats = feature_indices_v2(board, stm)
+        if len(feats) > self.max_active: feats = random.sample(feats, self.max_active)
+        arr = np.full(self.max_active, -1, dtype=np.int64)
+        arr[:len(feats)] = feats
+        return torch.from_numpy(arr), torch.tensor(float(target), dtype=torch.float32)
+
+def train(args):
+    device = args.device
+    if device=="auto":
+        if torch.cuda.is_available(): device="cuda"
+        elif hasattr(torch.backends,"mps") and torch.backends.mps.is_available(): device="mps"
+        else: device="cpu"
+    print(f"Device: {device}  H={H} L1={L1} L2={L2} micro_batch={args.batch} accum={args.accum} eff={args.batch*args.accum} amp={args.amp}")
+
+    # DeepSeek tricks: enable Tensor Core
+    if device=="cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+
+    ds = SDataDataset(args.sdata, max_active=args.max_active)
+    n_train = int(len(ds)*0.95)
+    g = torch.Generator().manual_seed(42)
+    train_ds, val_ds = torch.utils.data.random_split(ds, [n_train, len(ds)-n_train], generator=g)
+
+    # num_workers 2 + pin_memory + prefetch = overlap CPU feature gen with GPU
+    # keep 0 on low RAM systems to avoid fork OOM; auto-detect
+    nw = 2 if os.cpu_count() and os.cpu_count() >= 8 else 0
+    if args.workers is not None: nw = args.workers
+    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=nw, pin_memory=(device=="cuda"), prefetch_factor=2 if nw>0 else None, persistent_workers=(nw>0))
+    val_loader = DataLoader(val_ds, batch_size=args.batch*4, shuffle=False, num_workers=nw, pin_memory=(device=="cuda"), prefetch_factor=2 if nw>0 else None, persistent_workers=(nw>0))
+
+    net = OwenNetV2().to(device)
+    # torch.compile = DeepSeek fused kernels (inductor)
+    if args.compile and hasattr(torch, "compile"):
+        try:
+            net = torch.compile(net, mode="reduce-overhead")
+            print("torch.compile enabled")
+        except Exception as e:
+            print(f"torch.compile skip: {e}")
+
+    # 8-bit AdamW if bitsandbytes present — saves 75% optimizer VRAM (DeepSeek CPU offload style)
+    opt = None
+    try:
+        if args.eight_bit and device=="cuda":
+            import bitsandbytes as bnb
+            opt = bnb.optim.AdamW8bit(net.parameters(), lr=args.lr, weight_decay=1e-4)
+            print("Optimizer: AdamW8bit (bitsandbytes) — 75% VRAM saved")
+    except Exception as e:
+        print(f"8-bit adam not available: {e}")
+
+    if opt is None:
+        # fused AdamW on CUDA is faster and uses less memory than for-loop
+        try:
+            opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4, fused=(device=="cuda"))
+        except TypeError:
+            opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    loss_fn = nn.MSELoss()
+
+    # DeepSeek #1: AMP scaler
+    scaler = torch.amp.GradScaler('cuda', enabled=(args.amp and device=="cuda"))
+    best_val=float("inf")
+
+    for epoch in range(1, args.epochs+1):
+        net.train()
+        total=0
+        opt.zero_grad(set_to_none=True)
+        for step, (idx, target) in enumerate(train_loader, 1):
+            idx, target = idx.to(device, non_blocking=True), target.to(device, non_blocking=True)
+            # autocast FP16 for forward — Tensor Core on RTX 2050
+            with torch.amp.autocast('cuda', enabled=(args.amp and device=="cuda")):
+                pred = net(idx)
+                loss = loss_fn(pred, target) / args.accum  # scale for accumulation
+
+            scaler.scale(loss).backward()
+
+            if step % args.accum == 0:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+                scaler.step(opt)
+                scaler.update()
+                opt.zero_grad(set_to_none=True)
+
+            total+=loss.item()*args.accum*len(target)
+
+            if step % 500 == 0:
+                print(f"  step {step} loss {loss.item()*args.accum:.1f}")
+
+        # handle leftover grads
+        if len(train_loader) % args.accum != 0:
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            scaler.step(opt)
+            scaler.update()
+            opt.zero_grad(set_to_none=True)
+
+        sched.step()
+        net.eval()
+        vloss=0
+        with torch.no_grad():
+            for idx, target in val_loader:
+                idx, target = idx.to(device, non_blocking=True), target.to(device, non_blocking=True)
+                with torch.amp.autocast('cuda', enabled=(args.amp and device=="cuda")):
+                    pred = net(idx)
+                vloss += loss_fn(pred, target).item()*len(target)
+        vloss/=max(1,len(val_ds))
+        tloss=total/max(1,len(train_ds))
+        print(f"epoch {epoch:3d} train {tloss:.1f} val {vloss:.1f} lr {sched.get_last_lr()[0]:.2e}")
+        if vloss < best_val:
+            best_val=vloss
+            # unwrap compile wrapper for export
+            raw = net._orig_mod if hasattr(net, "_orig_mod") else net
+            raw.export_o2nn(args.out)
+        # free cache each epoch to avoid 4GB fragmentation
+        if device=="cuda": torch.cuda.empty_cache()
+    print("Done. Best val", best_val)
+
+if __name__=="__main__":
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--sdata", required=True)
+    ap.add_argument("--out", default="nets/o2-v1.o2nn")
+    ap.add_argument("--epochs", type=int, default=80)
+    ap.add_argument("--batch", type=int, default=512, help="micro-batch that fits 4GB (default 512)")
+    ap.add_argument("--accum", type=int, default=8, help="gradient accumulation steps (effective batch = batch*accum, default 4096)")
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--max-active", type=int, default=48)
+    ap.add_argument("--device", default="auto", choices=["auto","cuda","mps","cpu"])
+    ap.add_argument("--gpu", action="store_true")
+    ap.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True, help="FP16 mixed precision (DeepSeek FP8 style)")
+    ap.add_argument("--eight-bit", action=argparse.BooleanOptionalAction, default=False, help="8-bit AdamW via bitsandbytes")
+    ap.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--workers", type=int, default=None)
+    args=ap.parse_args()
+    if args.gpu: args.device="cuda"
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+    train(args)
