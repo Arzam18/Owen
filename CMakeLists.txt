@@ -5,15 +5,25 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(OWEN_NATIVE "Build with -march=native" ON)
+# Disable native march by default when cross-compiling (e.g. Android NDK)
+if(CMAKE_CROSSCOMPILING OR ANDROID)
+  set(OWEN_NATIVE_DEFAULT OFF)
+else()
+  set(OWEN_NATIVE_DEFAULT ON)
+endif()
+
+option(OWEN_NATIVE "Build with -march=native" ${OWEN_NATIVE_DEFAULT})
 option(OWEN_AVX2   "Enable AVX2 for NNUE" OFF)
 option(OWEN_EMBED_NET "Bake .o2nn into binary (like Stockfish)" OFF)
 set(OWEN_EMBED_NET_PATH "nets/o2-final.o2nn" CACHE STRING "Path to net to embed")
 
 add_compile_options(-Wall -Wextra -Wpedantic)
-if(OWEN_NATIVE)
+
+# Guard against adding -march=native during cross-compilation
+if(OWEN_NATIVE AND NOT CMAKE_CROSSCOMPILING AND NOT ANDROID)
   add_compile_options(-march=native)
 endif()
+
 if(OWEN_AVX2)
   add_compile_options(-mavx2 -mbmi2)
   add_compile_definitions(OWEN_AVX2)
