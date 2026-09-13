@@ -7,9 +7,6 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build-android:
     name: Build Android ARM64
@@ -18,19 +15,22 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          lfs: true # Downloads network file if using Git LFS
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
 
       - name: Install Android NDK
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
           unzip -q android-ndk-r26d-linux.zip
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
+
+      - name: Ensure NNUE Net File Exists
+        run: |
+          mkdir -p nets
+          # If nets/o2-final.o2nn is not committed to git, download it here:
+          if [ ! -f "nets/o2-final.o2nn" ]; then
+            echo "Downloading NNUE net..."
+            # Replace with your actual network download URL if applicable:
+            # wget -O nets/o2-final.o2nn "https://github.com/Arzam18/Owen/releases/download/net/o2-final.o2nn"
+          fi
 
       - name: Configure CMake (Android ARM64 with Embedded Net)
         run: |
@@ -41,10 +41,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DOWEN_EMBED_NET=ON
 
-      - name: Build Android Engine
-        run: cmake --build build-android --target owen2 -j$(nproc)
+      - name: Build Android Binary
+        run: cmake --build build-android -j$(nproc)
 
-      - name: Upload Android Executable
+      - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
         with:
           name: owen2-android-arm64
