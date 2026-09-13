@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Find system threads portably (handles Android, Linux, Windows, macOS)
+find_package(Threads REQUIRED)
+
 # Disable native march by default when cross-compiling (e.g. Android NDK)
 if(CMAKE_CROSSCOMPILING OR ANDROID)
   set(OWEN_NATIVE_DEFAULT OFF)
@@ -45,7 +48,7 @@ file(GLOB CORE_SRC
 )
 add_library(owen2_core STATIC ${CORE_SRC})
 target_include_directories(owen2_core PUBLIC src)
-target_link_libraries(owen2_core PUBLIC pthread)
+target_link_libraries(owen2_core PUBLIC Threads::Threads)
 
 # ── main engine ───────────────────────────────────────────────────
 # ── bake net into engine when requested (like Stockfish) ──────
