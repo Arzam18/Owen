@@ -1,4 +1,4 @@
-name: Owen Chess Engine CI
+name: Build Owen Engine (Android ARM64)
 
 on:
   push:
@@ -8,47 +8,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-desktop:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        build_type: [Release]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-
-      - name: Build Engine
-        run: cmake --build build --config ${{ matrix.build_type }} -j
-
-      - name: Run Perft Verification
-        shell: bash
-        run: |
-          if [ -f build/owen2-perft ]; then
-            ./build/owen2-perft
-          elif [ -f build/Release/owen2-perft.exe ]; then
-            ./build/Release/owen2-perft.exe
-          fi
-
-      - name: Upload Desktop Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: owen2-${{ runner.os }}
-          path: |
-            build/owen2
-            build/owen2.exe
-            build/Release/owen2.exe
-
   build-android:
-    name: Build (Android ARM64)
+    name: Build Android ARM64
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Install Android NDK
         run: |
@@ -56,7 +22,7 @@ jobs:
           unzip -q android-ndk-r26d-linux.zip
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
 
-      - name: Configure CMake (Android)
+      - name: Configure CMake (Android ARM64)
         run: |
           cmake -B build-android \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
@@ -64,11 +30,13 @@ jobs:
             -DANDROID_PLATFORM=android-24 \
             -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build Android Engine
+      - name: Build Android Binary
         run: cmake --build build-android -j$(nproc)
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
         with:
           name: owen2-android-arm64
-          path: build-android/owen2
+          path: |
+            build-android/owen2
+            build-android/owen2_core
