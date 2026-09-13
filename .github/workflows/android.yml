@@ -7,6 +7,9 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-android:
     name: Build Android ARM64
@@ -15,6 +18,13 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          lfs: true # Downloads network file if using Git LFS
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
       - name: Install Android NDK
         run: |
@@ -22,21 +32,20 @@ jobs:
           unzip -q android-ndk-r26d-linux.zip
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
 
-      - name: Configure CMake (Android ARM64)
+      - name: Configure CMake (Android ARM64 with Embedded Net)
         run: |
           cmake -B build-android \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOWEN_EMBED_NET=ON
 
-      - name: Build Android Binary
-        run: cmake --build build-android -j$(nproc)
+      - name: Build Android Engine
+        run: cmake --build build-android --target owen2 -j$(nproc)
 
-      - name: Upload Android Artifact
+      - name: Upload Android Executable
         uses: actions/upload-artifact@v4
         with:
           name: owen2-android-arm64
-          path: |
-            build-android/owen2
-            build-android/owen2_core
+          path: build-android/owen2
