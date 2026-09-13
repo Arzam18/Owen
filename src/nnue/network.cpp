@@ -3,10 +3,39 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 namespace owen2::nnue {
 
 Network g_network;
+
+#if defined(__AVX2__)
+// Dot product: a = uint8 (0..127 stored as int8), b = int8.
+// Uses maddubs (unsigned x signed -> int16 pair sums) then madd -> int32.
+inline int32_t dot_u8_s8_avx2(const int8_t* a, const int8_t* b, int n) {
+    __m256i acc = _mm256_setzero_si256();
+    const __m256i ones = _mm256_set1_epi16(1);
+    int i = 0;
+    for (; i + 32 <= n; i += 32) {
+        __m256i va = _mm256_loadu_si256((const __m256i*)(a + i));
+        __m256i vb = _mm256_loadu_si256((const __m256i*)(b + i));
+        __m256i pair = _mm256_maddubs_epi16(va, vb);      // 16 x int16
+        __m256i quad = _mm256_madd_epi16(pair, ones);     // 8 x int32
+        acc = _mm256_add_epi32(acc, quad);
+    }
+    // horizontal sum
+    __m128i lo = _mm256_castsi256_si128(acc);
+    __m128i hi = _mm256_extracti128_si256(acc, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_hadd_epi32(s, s);
+    s = _mm_hadd_epi32(s, s);
+    int32_t total = _mm_cvtsi128_si32(s);
+    for (; i < n; ++i) total += (int32_t)a[i] * (int32_t)b[i];
+    return total;
+}
+#endif
 
 int Network::forward(const std::array<int16_t,H>& acc) const {
     std::array<int8_t, H> h0{};
@@ -20,7 +49,11 @@ int Network::forward(const std::array<int16_t,H>& acc) const {
     std::array<int16_t, L1> l1{};
     for(int o=0;o<L1;++o){
         int32_t s = l1_bias[o];
+#if defined(__AVX2__)
+        s += dot_u8_s8_avx2(h0.data(), (const int8_t*)&l1_weights[o*H], H);
+#else
         for(int i=0;i<H;++i) s += (int32_t)h0[i] * (int32_t)l1_weights[o*H + i];
+#endif
         s >>= 6;
         s = std::clamp<int32_t>(s, 0, 127);
         l1[o] = int16_t(s);

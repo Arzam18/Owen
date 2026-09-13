@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Owen 2 — Lichess loop to 60M distilled (beats SF18 3720 CCRL)
+# Owen 2 — Lichess loop to 60M distilled (target: approach SF18 ~3720 CCRL — unproven, measure with cutechess)
 # Auto-downloads Lichess PGN zst, converts -> distills -> trains. Resume: just re-run.
 # Usage: bash scripts/lichess_loop.sh         -> 60M (~25 chunks x 2.43M)
 #        bash scripts/lichess_loop.sh 100     -> 100M / whatever you set

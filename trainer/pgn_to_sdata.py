@@ -13,8 +13,26 @@ import argparse, os, struct, gzip, io, sys, time, random
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-RECORD_SIZE = 69
+RECORD_SIZE = 71  # v2: 64B board + stm + eval(i16) + result + ply + castling + ep
+RECORD_FMT_V2 = "<64B B h B B B B"
 PIECE_MAP = {'P':0,'N':1,'B':2,'R':3,'Q':4,'K':5,'p':6,'n':7,'b':8,'r':9,'q':10,'k':11}
+
+def board_castling_ep(board):
+    """Extract UCI-style castling bits (K=1,Q=2,k=4,q=8) and ep square (0..63, 64 none)."""
+    c = 0
+    # python-chess: board.has_kingside_castling_rights(chess.WHITE) etc.
+    try:
+        import chess
+        if board.has_kingside_castling_rights(chess.WHITE): c |= 1
+        if board.has_queenside_castling_rights(chess.WHITE): c |= 2
+        if board.has_kingside_castling_rights(chess.BLACK): c |= 4
+        if board.has_queenside_castling_rights(chess.BLACK): c |= 8
+        ep = board.ep_square if board.ep_square is not None else 64
+        # python-chess square 0=a1..63=h8 matches our make_square(file,rank)
+        if ep is None: ep = 64
+    except Exception:
+        c, ep = 0, 64
+    return c, int(ep)
 
 def board_to_record(board, result_cp=0):
     # board is chess.Board
@@ -95,7 +113,8 @@ def process_chunk(args):
                 stm = 0 if board.turn else 1
                 res = game_result_to_stm(result_str, stm)
                 # eval placeholder 0 — will be overwritten by distill via SF
-                rec = struct.pack(f"<64B B h B B", *arr, stm, 0, res, ply & 0xFF)
+                castling, ep = board_castling_ep(board)
+                rec = struct.pack(RECORD_FMT_V2, *arr, stm, 0, res, ply & 0xFF, castling & 0xFF, ep & 0xFF)
                 out_buf.extend(rec)
                 written+=1
     except Exception as e:

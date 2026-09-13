@@ -36,7 +36,7 @@ python3 trainer/pgn_to_sdata.py \
   --max 10000000 --threads 12 --min-ply 30 --elo-min 2000
 ```
 
-Each `sdata` record is 69 bytes (packed):
+Each `sdata` record is 71 bytes v2 (packed, legacy 69B still readable):
 
 | field | size | meaning |
 |---|---|---|
@@ -45,6 +45,10 @@ Each `sdata` record is 69 bytes (packed):
 | `eval` | 2 B | placeholder `0` until distillation (`int16 cp`) |
 | `result` | 1 B | `0` loss / `1` draw / `2` win (from STM view) |
 | `ply` | 1 B | ply count |
+| `castling` | 1 B | `K=1 Q=2 k=4 q=8` (v2; v1 files assume `0`) |
+| `ep` | 1 B | en-passant square `0..63`, `64` none (v2; v1 files assume `64`) |
+
+v1 (69B) records without castling/EP distill to `- -` FENs (biased labels — regenerate with v2 writers). v2 emits full `KQkq` + EP so teacher evals match the real position.
 
 Filters: `elo-min` and `min-ply` skip low-quality / opening positions. Positions are sampled evenly.
 

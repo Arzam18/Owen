@@ -15,22 +15,36 @@ void TranspositionTable::resize(size_t mb){
 void TranspositionTable::clear(){ for(auto &e: table_) e={}; age_=0; }
 
 TTEntry* TranspositionTable::probe(uint64_t key, bool &hit){
+    // Legacy API: returns pointer to thread-local snapshot so Lazy SMP
+    // readers don't race with concurrent stores.
     if(table_.empty()){ hit=false; return nullptr; }
-    size_t idx = (key * 11400714819323198485ULL >> 32) & mask_;
-    // cheap hash: multiplicative
-    // use key mixing
-    idx = (key ^ (key>>32)) & mask_;
-    TTEntry &e = table_[idx];
+    static thread_local TTEntry snap;
+    Move m = probe_move(key, hit);
+    // probe_move already set hit; also fill snapshot for callers that read value/depth
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        size_t idx = (key ^ (key>>32)) & mask_;
+        snap = table_[idx];
+    }
+    (void)m;
+    return &snap;
+}
+Move TranspositionTable::probe_move(uint64_t key, bool &hit){
+    if(table_.empty()){ hit=false; return 0; }
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t idx = (key ^ (key>>32)) & mask_;
+    const TTEntry &e = table_[idx];
     hit = (e.key == key);
-    return &e;
+    return hit ? e.move : 0;
 }
 void TranspositionTable::store(uint64_t key, Value v, int depth, uint8_t flag, Move m){
     if(table_.empty()) return;
-    bool hit; TTEntry* e = probe(key, hit);
-    if(!e) return;
-    // replacement: deeper or newer age wins; always replace if empty
-    if(e->key==0 || depth+2 >= e->depth || e->age != age_){
-        e->key=key; e->value=int16_t(v); e->depth=int16_t(depth); e->flag=flag; e->move=m; e->age=age_;
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t idx = (key ^ (key>>32)) & mask_;
+    TTEntry &e = table_[idx];
+    // replacement: empty, newer generation, or deeper (with +2 slack) wins
+    if(e.key==0 || depth+2 >= e.depth || e.age != age_){
+        e.key=key; e.value=int16_t(v); e.depth=int16_t(depth); e.flag=flag; e.move=m; e.age=age_;
     }
 }
 size_t TranspositionTable::hashfull() const {

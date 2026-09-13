@@ -171,8 +171,10 @@ static void apply_setoption(const std::string& line){
         int iv; if(!parse_int_strict(value, iv)){ log_info("UCI_Elo needs integer value"); return; }
         iv = clampSpin(iv, 1320, 4100);
         g_uciElo = iv;
+        g_searcher.set_uci_elo(iv);
     } else if(lname=="uci_limitstrength"){
         g_limitStrength = ieq(value,"true") || value=="1";
+        g_searcher.set_limit_strength(g_limitStrength);
     } else if(lname=="debug log file"){
         // accepted for GUI compat, no file logging implemented.
     } else if(lname=="mts_c"){
@@ -194,7 +196,7 @@ static void apply_setoption(const std::string& line){
             log_info("unknown option '" + name + "' ignored");
         }
     }
-    (void)g_limitStrength; (void)g_uciElo;
+    // g_limitStrength/g_uciElo are mirrored into Searcher via setters above.
 }
 
 static void set_position(const std::string& line){
@@ -551,8 +553,40 @@ void uci_loop(){
                 auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count();
                 safePrint("perft " + std::to_string(d) + " " + std::to_string(n) + " (" + std::to_string(ms) + " ms)");
             }
+        } else if(t=="bench" || t.rfind("bench ",0)==0){
+            // Non-UCI diagnostic: fixed startpos search, repeatable numbers.
+            // Uses a throwaway Searcher (single thread) so live TT/state is untouched.
+            int depth=6;
+            {
+                std::istringstream iss(t);
+                std::string tok; iss >> tok;
+                int d=0; if(iss >> d) depth = std::max(1, std::min(d, 10));
+            }
+            if(g_searching.load()){
+                safePrint("info string bench: search in progress, try later");
+            } else {
+                search::Searcher bsearch;
+                Position bp;
+                bp.set_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+                bsearch.set_position(bp);
+                search::SearchLimits lim; lim.depth = depth;
+                std::atomic<bool> bst{false};
+                auto t0=std::chrono::steady_clock::now();
+                auto res = bsearch.search(lim, bst, nullptr);
+                auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now()-t0).count();
+                uint64_t h=bsearch.eval_cache().hits(), m=bsearch.eval_cache().misses();
+                double hr = (h+m) ? 100.0*double(h)/double(h+m) : 0.0;
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                    "bench depth %d nodes %llu nps %lld time %lldms bestmove %s evalhit %.1f%%",
+                    depth, (unsigned long long)res.nodes,
+                    ms ? (long long)(res.nodes*1000ULL/std::max<int64_t>(1,ms)) : 0,
+                    (long long)ms, move_to_uci(res.bestMove).c_str(), hr);
+                safePrint(buf);
+            }
         } else if(t=="help"){
-            safePrint("Owen 2 UCI — commands: uci, isready, ucinewgame, position, go, stop, ponderhit, quit, d, perft [n]");
+            safePrint("Owen 2 UCI — commands: uci, isready, ucinewgame, position, go, stop, ponderhit, quit, d, perft [n], bench [depth]");
         } else {
             // Unknown command — spec: ignore silently. Do not emit info string per unknown to avoid GUI log spam.
             // Debug to stderr only.

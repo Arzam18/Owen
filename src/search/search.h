@@ -40,7 +40,10 @@ public:
     void set_move_overhead(int ms){ moveOverheadMs_ = std::max(0, ms); }
     void set_slow_mover(int v){ slowMover_ = std::clamp(v, 10, 1000); }
     void set_show_wdl(bool v){ showWDL_ = v; }
-    void new_game(){ tt_.clear(); }
+    void set_limit_strength(bool v){ limitStrength_ = v; }
+    void set_uci_elo(int e){ uciElo_ = std::clamp(e, 1320, 4100); }
+    int64_t elo_node_cap() const; // -1 = no cap
+    void new_game(){ tt_.clear(); evalCache_.clear(); }
     void set_position(const Position& p){ pos_=p; }
     TranspositionTable& tt(){ return tt_; }
 
@@ -52,14 +55,18 @@ public:
                         std::function<void(const std::string&)> info_cb = nullptr);
 
     void stop(){ stopFlag_.store(true); }
+    nnue::EvalCache& eval_cache(){ return evalCache_; }
 private:
     Position pos_;
     TranspositionTable tt_;
+    nnue::EvalCache evalCache_;
     MarrowConfig marrowCfg_;
     int threads_=1;
     int moveOverheadMs_=10;
     int slowMover_=100;
     bool showWDL_=false;
+    bool limitStrength_=false;
+    int uciElo_=1320;
     std::atomic<bool> stopFlag_{false};
     int64_t time_budget_ms(const SearchLimits& lim) const;
 };

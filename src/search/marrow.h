@@ -2,6 +2,7 @@
 #include "../position.h"
 #include "../movegen.h"
 #include "../nnue/network.h"
+#include "../nnue/eval_cache.h"
 #include "tt.h"
 #include <vector>
 #include <memory>
@@ -27,8 +28,12 @@ struct MarrowNode {
     int depth=0;                 // ply from root
     bool expanded=false;
     bool is_terminal=false;
-    bool is_proven_win=false;    // proof urgency: forced mate found
+    // Proof flags are NODE-relative: is_proven_loss on a child means the
+    // child player is mated/done = a WIN for the parent. is_proven_win on a
+    // child means the opponent wins from there = avoid it.
+    bool is_proven_win=false;
     bool is_proven_loss=false;
+    int proven_depth=1000000;    // plies from this node to the proven end (min for wins)
     Value terminal_value=0;
     std::vector<std::unique_ptr<MarrowNode>> children;
 
@@ -51,8 +56,9 @@ struct MarrowConfig {
 
 class MarrowTree {
 public:
-    MarrowTree(const Position& rootPos, TranspositionTable& tt, const MarrowConfig& cfg)
-        : rootPos_(rootPos), tt_(tt), cfg_(cfg)
+    MarrowTree(const Position& rootPos, TranspositionTable& tt,
+               nnue::EvalCache& evalCache, const MarrowConfig& cfg)
+        : rootPos_(rootPos), tt_(tt), evalCache_(evalCache), cfg_(cfg)
     {
         root_ = std::make_unique<MarrowNode>();
         root_->expanded=false;
@@ -64,27 +70,44 @@ public:
                       std::function<void(int visits, Value score, Move best)> on_info = nullptr);
 
     int total_visits() const { return totalVisits_; }
+    int max_depth() const { return maxDepth_; }
     MarrowNode* root() { return root_.get(); }
 
 private:
     Position rootPos_;
     TranspositionTable& tt_;
+    nnue::EvalCache& evalCache_;
     MarrowConfig cfg_;
     std::unique_ptr<MarrowNode> root_;
     int totalVisits_=0;
+    int maxDepth_=0;
     // history table [from 64][to 64] for classical scaling — simple but effective
     int history_[64][64]{};
+    // killer moves per tree-ply: quiet moves that were good for their mover
+    Move killers_[96][2]{};
+    // Scratch state reused across iterations (heap capacity retained, no
+    // per-node malloc): working position, legality-filter positions (one
+    // per quiescence level + expand + leaf check), and move/path buffers.
+    Position workPos_;
+    Position expScratch_;
+    Position qscratch_[8];
+    Position evalScratch_;
+    std::vector<MarrowNode*> pathBuf_;
+    std::vector<Move> expMoves_;
 
     // one iteration: select -> expand/evaluate -> backup
     // returns leaf value from leaf player's perspective
     Value iterate(Position& pos);
 
     struct SelectFrame { MarrowNode* node; int childIdx; };
-    std::vector<SelectFrame> select_path(Position& pos, std::vector<MarrowNode*>& path);
+    void select_path(Position& pos, std::vector<MarrowNode*>& path);
 
     void expand_node(MarrowNode* node, const Position& pos);
     double ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits) const;
-    Value evaluate_leaf(const Position& pos);
+    Value evaluate_leaf(Position& pos);
+    Value quiescence(Position& pos, Value alpha, Value beta, int depth);
+    // Raw NNUE stand-pat through the eval cache (never mates/terminals).
+    int eval_cached(const Position& pos);
     void backup(std::vector<MarrowNode*>& path, Value leafValue);
 };
 

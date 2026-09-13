@@ -47,6 +47,19 @@ static std::string wdl_string(Value score){
     return std::to_string(win) + " " + std::to_string(draw) + " " + std::to_string(loss);
 }
 
+int64_t Searcher::elo_node_cap() const {
+    if(!limitStrength_) return -1;
+    // Honest limiter: cap visit budget by Elo. Never claims strength above
+    // what MTS+NN can deliver; top end (~3500+) is uncapped.
+    // Anchors (visits): 1320->80, 1600->300, 2000->1200, 2400->5000,
+    // 2800->18000, 3200->70000, 3500+->uncapped.
+    static const int elo[]   = {1320,1600,2000,2400,2800,3200,3500};
+    static const int64_t nd[] = {80,  300, 1200,5000,18000,70000,-1};
+    if(uciElo_ >= 3500) return -1;
+    for(size_t i=0;i<7;++i) if(uciElo_ <= elo[i]) return nd[i];
+    return -1;
+}
+
 SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
                               std::function<void(const std::string&)> info_cb)
 {
@@ -66,18 +79,20 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
     // We handle searchmoves by pruning tree root children after expansion — simpler
     // than filtering since marrow picks from legal moves.
 
-    MarrowTree tree(searchPos, tt_, marrowCfg_);
+    MarrowTree tree(searchPos, tt_, evalCache_, marrowCfg_);
 
     auto elapsed_ms = [&]()->int64_t{
         return std::chrono::duration_cast<std::chrono::milliseconds>(clock::now()-t0).count();
     };
+    int64_t eloCap = elo_node_cap();
 
     // Exactly one stop mode wins — mirrors Stockfish: movetime > nodes > mate >
     // depth > infinite/ponder > time-control. The old code stacked depth AND
     // time, giving 8000*depth when depth was also set (depth 4 -> 32000 nodes).
-    auto should_stop = [&]()->bool{
+    auto should_stop_single = [&](MarrowTree& tr)->bool{
         if(stop.load()) return true;
-        if(lim.nodes>=0 && tree.total_visits() >= lim.nodes) return true;
+        if(eloCap >= 0 && tr.total_visits() >= eloCap) return true;
+        if(lim.nodes>=0 && tr.total_visits() >= lim.nodes) return true;
         // movetime is exclusive (hard limit) — always first if set
         if(lim.movetime_ms>=0) return elapsed_ms() >= budget;
         bool hasTimeLocal = (lim.wtime_ms>=0 || lim.btime_ms>=0);
@@ -86,19 +101,24 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
                 static const int kBudget[] = {0,1200,3000,7000,12000,20000,32000,52000,85000,130000,200000};
                 int b = (lim.depth < (int)(sizeof(kBudget)/sizeof(kBudget[0])))
                     ? kBudget[lim.depth] : lim.depth * 15000;
-                if(tree.total_visits() >= b) return true;
+                if(eloCap >= 0) b = (int)std::min<int64_t>(b, eloCap);
+                if(tr.total_visits() >= b) return true;
             } else if(lim.depth >= 64){
                 if(elapsed_ms() >= 1500) return true;
-                if(tree.total_visits() >= 15000) return true;
+                int64_t b = 15000;
+                if(eloCap >= 0) b = std::min<int64_t>(b, eloCap);
+                if(tr.total_visits() >= b) return true;
             }
         }
         if(!lim.infinite && !lim.ponder && useBudget && elapsed_ms() >= budget) return true;
         if(lim.mate>=0){
-            MarrowNode* r = tree.root();
-            if(r) for(auto& c: r->children) if(c->is_proven_win) return true;
+            MarrowNode* r = tr.root();
+            // Node-relative: a proven-LOSS root child = opponent mated.
+            if(r) for(auto& c: r->children) if(c->is_proven_loss) return true;
         }
         return false;
     };
+    auto should_stop = [&]()->bool{ return should_stop_single(tree); };
 
     // Track max seldepth seen and emit proper iterative-deepening-style info
     int curDepth = 1;
@@ -114,12 +134,12 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
         }
         return d;
     };
-    auto on_info = [&](int visits, Value score, Move best){
+    auto report_info = [&](MarrowTree& t, int visits, Value score, Move best){
         if(!info_cb) return;
         int64_t ms = elapsed_ms();
         int64_t nps = ms ? visits*1000/ms : 0;
         std::string pv = move_to_uci(best);
-        seldepthMax = std::max(seldepthMax, deepest_in_tree(tree));
+        seldepthMax = std::max(seldepthMax, deepest_in_tree(t));
         int d = 1;
         if(visits >= 800) d=2;
         if(visits >= 2500) d=3;
@@ -156,6 +176,9 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
         }
         info_cb(line);
     };
+    auto on_info = [&](int visits, Value score, Move best){
+        report_info(tree, visits, score, best);
+    };
 
     // If searchmoves restricted, expand then prune disallowed children before search.
     if(!lim.searchmoves.empty()){
@@ -170,7 +193,181 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
         // Minimal: keep all moves; illegal restriction is silently ignored if parse fails.
     }
 
-    Move best = tree.search_until(should_stop, on_info);
+    int T = std::clamp(threads_, 1, 64);
+    Move best = 0;
+    uint64_t totalNodes = 0;
+    Value bestScore = 0;
+    MarrowNode* bestRoot = nullptr;
+    // Single-thread fast path (identical behaviour to before).
+    if(T == 1){
+        best = tree.search_until(should_stop, on_info);
+        totalNodes = (uint64_t)tree.total_visits();
+        bestRoot = tree.root();
+    } else {
+        // Lazy SMP: N trees share TT + stop flag, each with slight C jitter
+        // for diversity. Main thread (idx 0) emits info; others run silent.
+        struct WorkerRes { Move best=0; int visits=0; Value score=0; int depth=0; };
+        std::vector<WorkerRes> res(T);
+        std::vector<std::unique_ptr<MarrowTree>> trees;
+        trees.reserve(T);
+        for(int i=0;i<T;++i){
+            MarrowConfig cfg = marrowCfg_;
+            cfg.C *= (1.0 + 0.07 * double((i % 3) - 1)); // -7%, 0, +7%
+            trees.push_back(std::make_unique<MarrowTree>(searchPos, tt_, evalCache_, cfg));
+        }
+        std::vector<std::thread> workers;
+        workers.reserve(T-1);
+        // per-thread node budgets so `go nodes N` / Elo cap split across workers
+        auto per_thread_cap = [&](int64_t total)->int64_t{
+            if(total < 0) return -1;
+            return std::max<int64_t>(1, total / T);
+        };
+        int64_t nodesCap = lim.nodes;
+        int64_t perNodes = per_thread_cap(nodesCap);
+        int64_t perElo = per_thread_cap(eloCap);
+        // Depth visit-budgets are TOTAL work: split across workers so that
+        // `go depth D` costs the same aggregate nodes at any thread count
+        // (previously each worker ran the full budget = T× oversearch).
+        auto depth_budget_total = [&]()->int64_t{
+            if(lim.depth < 64 && lim.depth >= 1){
+                static const int kB[] = {0,1200,3000,7000,12000,20000,32000,52000,85000,130000,200000};
+                return (lim.depth < (int)(sizeof(kB)/sizeof(kB[0])))
+                    ? kB[lim.depth] : int64_t(lim.depth)*15000;
+            }
+            return int64_t(15000);
+        };
+        int64_t perDepth = per_thread_cap(depth_budget_total());
+        for(int i=1;i<T;++i){
+            workers.emplace_back([&, i]{
+                MarrowTree& tr = *trees[i];
+                auto stop_i = [&]()->bool{
+                    if(stop.load()) return true;
+                    if(perElo >= 0 && tr.total_visits() >= perElo) return true;
+                    if(perNodes >= 0 && tr.total_visits() >= perNodes) return true;
+                    if(lim.movetime_ms>=0) return elapsed_ms() >= budget;
+                    bool hasTl = (lim.wtime_ms>=0 || lim.btime_ms>=0);
+                    if(!lim.infinite && !lim.ponder && !hasTl && lim.depth < 64 && lim.depth >= 1){
+                        int64_t b = perDepth;
+                        if(perElo >= 0) b = std::min(b, perElo);
+                        if(tr.total_visits() >= b) return true;
+                    }
+                    if(!lim.infinite && !lim.ponder && useBudget && elapsed_ms() >= budget) return true;
+                    return false;
+                };
+                Move b = tr.search_until(stop_i, nullptr);
+                res[i].best = b;
+                res[i].visits = tr.total_visits();
+                res[i].depth = tr.max_depth();
+                if(auto* r = tr.root())
+                    for(auto& c : r->children) if(c->move == b){ res[i].score = Value(-c->q()); break; }
+            });
+        }
+        // Main thread does info + same stop logic (full eloCap handled via single-tree path
+        // but scaled: main also uses per-thread cap so total ≈ cap).
+        {
+            MarrowTree& tr = *trees[0];
+            auto stop_0 = [&]()->bool{
+                if(stop.load()) return true;
+                if(perElo >= 0 && tr.total_visits() >= perElo) return true;
+                if(perNodes >= 0 && tr.total_visits() >= perNodes) return true;
+                if(lim.movetime_ms>=0) return elapsed_ms() >= budget;
+                bool hasTl = (lim.wtime_ms>=0 || lim.btime_ms>=0);
+                if(!lim.infinite && !lim.ponder && !hasTl){
+                    if(lim.depth < 64 && lim.depth >= 1){
+                        int64_t b = perDepth;
+                        if(perElo >= 0) b = std::min(b, perElo);
+                        if(tr.total_visits() >= b) return true;
+                    } else if(lim.depth >= 64){
+                        if(elapsed_ms() >= 1500) return true;
+                        int64_t b = perDepth;
+                        if(perElo >= 0) b = std::min(b, perElo);
+                        if(tr.total_visits() >= b) return true;
+                    }
+                }
+                if(!lim.infinite && !lim.ponder && useBudget && elapsed_ms() >= budget) return true;
+                return false;
+            };
+            // Route info through the main tree's visit counts.
+            auto on_info_main = [&](int visits, Value score, Move best){
+                report_info(*trees[0], visits, score, best);
+            };
+            Move b0 = tr.search_until(stop_0, on_info_main);
+            res[0].best = b0;
+            res[0].visits = tr.total_visits();
+            res[0].depth = tr.max_depth();
+            if(auto* r = tr.root())
+                for(auto& c : r->children) if(c->move == b0){ res[0].score = Value(-c->q()); break; }
+        }
+        for(auto& th : workers) th.join();
+        // Vote: most visits wins (robust to eval noise), tie-break by q.
+        int bi = 0;
+        for(int i=1;i<T;++i){
+            if(res[i].visits > res[bi].visits ||
+               (res[i].visits == res[bi].visits && res[i].score > res[bi].score)) bi = i;
+        }
+        best = res[bi].best;
+        bestScore = res[bi].score;
+        for(auto& r : res) totalNodes += (uint64_t)r.visits;
+        // Keep tree (single) for searchmoves fallback below; point bestRoot at winner.
+        // trees[bi] stays alive until return.
+        bestRoot = trees[bi]->root();
+        // Extend lifetime: move winner tree into a static holder is overkill;
+        // instead re-point `tree` results via best/bestScore and use bestRoot now.
+        // NOTE: trees vector stays alive through the searchmoves block below.
+        // To keep bestRoot valid, stash winner visits in `tree` is not needed;
+        // we handle score/nodes explicitly and skip re-reading tree.root() later.
+        // Mark single-tree root unused in SMP path.
+        (void)tree;
+        // searchmoves + ponder below use bestRoot/totalNodes/bestScore.
+        // Fall through with SMP results.
+        // Use a small trick: set a flag via bestScore/totalNodes and handle after.
+        // Store winner tree pointer for the fallback scan.
+        // (trees alive until end of scope.)
+        goto smp_done;
+        smp_done:;
+        // Aggregate score/nodes for return; root scan uses bestRoot.
+        bestScore = res[bi].score;
+        totalNodes = 0; for(auto& r : res) totalNodes += (uint64_t)r.visits;
+        // Temporarily store winner root for the code below.
+        // We replace `tree.root()` uses with bestRoot via local handling:
+        if(!lim.searchmoves.empty() && best){
+            std::string bestStr = move_to_uci(best);
+            bool allowed=false;
+            for(auto& s: lim.searchmoves) if(s==bestStr){ allowed=true; break; }
+            if(!allowed){
+                Move alt=0; int bestVis=-1;
+                if(bestRoot){
+                    for(auto& c: bestRoot->children){
+                        std::string cs = move_to_uci(c->move);
+                        bool ok=false; for(auto& s: lim.searchmoves) if(s==cs) ok=true;
+                        if(ok && c->visits > bestVis){ bestVis=c->visits; alt=c->move; }
+                    }
+                }
+                if(alt){ best=alt; bestScore=0; if(bestRoot) for(auto& c: bestRoot->children) if(c->move==alt) bestScore=Value(-c->q()); }
+                else {
+                    for(auto& s: lim.searchmoves){
+                        Move m = parse_uci_move(searchPos, s);
+                        if(m){ best=m; break; }
+                    }
+                }
+            }
+        }
+        if(!best){
+            auto ms = generate_legal(searchPos);
+            if(!ms.empty()) best = ms[0];
+        }
+        {
+            Move ponder=0;
+            if(best){
+                Position tmp=searchPos; tmp.do_move(best);
+                auto replies=generate_legal(tmp);
+                if(!replies.empty()) ponder=replies[0];
+            }
+            auto t1 = clock::now();
+            int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1-t0).count();
+            return SearchResult{best, ponder, bestScore, 1, totalNodes, ms};
+        }
+    }
     // Enforce searchmoves at the end if needed (cheap & correct)
     if(!lim.searchmoves.empty() && best){
         std::string bestStr = move_to_uci(best);
@@ -211,7 +408,7 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
     MarrowNode* root = tree.root();
     Value sc=0;
     if(root){
-        for(auto &c: root->children) if(c->move==best){ sc=Value(c->q()); break; }
+        for(auto &c: root->children) if(c->move==best){ sc=Value(-c->q()); break; }
     }
     return SearchResult{best, ponder, sc, 1, (uint64_t)tree.total_visits(), ms};
 }

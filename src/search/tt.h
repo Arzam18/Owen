@@ -21,12 +21,14 @@ public:
     void clear();
     void new_search() { ++age_; }
     TTEntry* probe(uint64_t key, bool &hit);
+    Move probe_move(uint64_t key, bool &hit); // thread-safe: returns stored move under lock
     void store(uint64_t key, Value v, int depth, uint8_t flag, Move m);
     size_t hashfull() const; // per mille
 private:
     std::vector<TTEntry> table_;
     size_t mask_=0;
     uint8_t age_=0;
+    mutable std::mutex mu_; // guards probe/store for Lazy SMP (fine-grained enough at UCI time controls)
 };
 
 } // namespace owen2

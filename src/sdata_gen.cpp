@@ -20,9 +20,11 @@ struct SDataRecord {
     int16_t eval;
     uint8_t result;
     uint8_t ply;
+    uint8_t castling; // bit0 K, bit1 Q, bit2 k, bit3 q
+    uint8_t ep;       // 0..63 square, 64 = none
 };
 #pragma pack(pop)
-static_assert(sizeof(SDataRecord)==69, "pack broken");
+static_assert(sizeof(SDataRecord)==71, "pack broken");
 
 static void play_games(int thread_id, int games, int movetime_ms, int depth,
                        const std::string& net_path, const std::string& out_path,
@@ -93,6 +95,8 @@ static void play_games(int thread_id, int games, int movetime_ms, int depth,
             r.stm = (uint8_t)pos.side_to_move();
             r.eval = (int16_t)std::clamp<int>(res.score, -15000, 15000);
             r.ply = (uint8_t)std::min(ply, 255);
+            r.castling = (uint8_t)pos.castling_rights();
+            r.ep = (uint8_t)(pos.ep_square() >= 64 ? 64 : pos.ep_square());
             game.push_back(r);
 
             pos.do_move(m);

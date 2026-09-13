@@ -13,11 +13,32 @@ DeepSeek tricks for teacher: parallel UCI engines (8x) + batched FENs, no GPU ne
 """
 import argparse, os, struct, subprocess, threading, queue, time
 
+RECORD_SIZE_V1 = 69
+RECORD_SIZE_V2 = 71
 RECORD_SIZE = 69
 SF_DEFAULT = os.path.expanduser("~/Videos/stockfish/stockfish-ubuntu-x86-64-avx2")
 
-def board_to_fen(board, stm, ply=0):
-    """board 64 uint8 0..11/12 -> fen. stm 0 white 1 black. Minimal: no castle/EP since sdata positions are midgame."""
+def detect_record_size(path):
+    sz = os.path.getsize(path)
+    if sz % RECORD_SIZE_V2 == 0 and sz % RECORD_SIZE_V1 != 0:
+        return RECORD_SIZE_V2
+    return RECORD_SIZE_V1
+
+def unpack_distill_record(b):
+    """Return (board_bytes, stm, ply, castling, ep). Handles v1 (69B) and v2 (71B)."""
+    board = b[0:64]
+    stm = b[64]
+    ply = b[68]
+    if len(b) >= 71:
+        castling = b[69]
+        ep = b[70]
+    else:
+        castling, ep = 0, 64
+    return board, stm, ply, castling, ep
+
+def board_to_fen(board, stm, ply=0, castling=0, ep=64):
+    """board 64 uint8 0..11/12 -> fen. stm 0 white 1 black.
+    v2 passes real castling/EP; v1 legacy falls back to '-' (biased, prefer v2)."""
     piece_map = {0:'P',1:'N',2:'B',3:'R',4:'Q',5:'K',6:'p',7:'n',8:'b',9:'r',10:'q',11:'k'}
     rows=[]
     for r in range(7,-1,-1):
@@ -33,8 +54,17 @@ def board_to_fen(board, stm, ply=0):
         if empty: row+=str(empty)
         rows.append(row)
     stm_c = 'w' if stm==0 else 'b'
-    # No castle/EP from sdata — use '-' and assume not needed for eval depth 12
-    return f"{'/'.join(rows)} {stm_c} - - 0 {ply+1}"
+    cs = ""
+    if castling & 1: cs += "K"
+    if castling & 2: cs += "Q"
+    if castling & 4: cs += "k"
+    if castling & 8: cs += "q"
+    if not cs: cs = "-"
+    if ep is None or ep >= 64:
+        eps = "-"
+    else:
+        eps = chr(ord('a') + (int(ep) % 8)) + str(int(ep) // 8 + 1)
+    return f"{'/'.join(rows)} {stm_c} {cs} {eps} 0 {ply+1}"
 
 def eval_with_sf(engine_path, fen, depth, hash_mb=16):
     """One UCI eval via subprocess per position — simple but parallelized by workers."""
@@ -138,25 +168,28 @@ class SFWorker:
             except: self.proc.kill()
         except: pass
 
-def iter_records(path):
-    n=os.path.getsize(path)//RECORD_SIZE
+def iter_records(path, record_size=None):
+    if record_size is None:
+        record_size = detect_record_size(path)
+    n=os.path.getsize(path)//record_size
     with open(path,"rb") as f:
         for _ in range(n):
-            b=f.read(RECORD_SIZE)
-            if len(b)<RECORD_SIZE: break
+            b=f.read(record_size)
+            if len(b)<record_size: break
             yield b
 
 def distill(args):
     import concurrent.futures
     sdata=args.sdata
     out=args.out
-    n=os.path.getsize(sdata)//RECORD_SIZE
-    print(f"Distill: {n} positions from {sdata} via {args.stockfish} depth {args.depth} threads {args.threads}")
+    rs = detect_record_size(sdata)
+    n=os.path.getsize(sdata)//rs
+    print(f"Distill: {n} positions from {sdata} (record {rs}B {'v2' if rs==71 else 'v1-legacy'}) via {args.stockfish} depth {args.depth} threads {args.threads}")
 
     out_exists=False
     already=0
     if os.path.exists(out):
-        already=os.path.getsize(out)//RECORD_SIZE
+        already=os.path.getsize(out)//rs
         if 0 < already < n:
             print(f" Resume: {already}/{n} already in {out} — will append rest")
             out_exists=True
@@ -183,12 +216,10 @@ def distill(args):
 
     def eval_one(i):
         b=records[i]
-        board=b[0:64]
-        stm=b[64]
-        ply=b[68]
+        board, stm, ply, castling, ep = unpack_distill_record(b)
         import numpy as np
         brd=np.frombuffer(board, dtype=np.uint8)
-        fen=board_to_fen(brd, stm, ply)
+        fen=board_to_fen(brd, stm, ply, castling, ep)
         w = workers[i % len(workers)]
         cp=w.eval_fen(fen)
         new = bytearray(b)
@@ -237,7 +268,7 @@ def distill(args):
         for r in out_records:
             f.write(r if r is not None else records[len(failed)]*0)
     sz=os.path.getsize(out)
-    print(f"Done -> {out}  {sz} bytes  {sz//RECORD_SIZE} positions  failed {len(failed)}")
+    print(f"Done -> {out}  {sz} bytes  {sz//rs} positions  failed {len(failed)}")
     if failed:
         print(f" {len(failed)} positions had fallback cp=0 (see WARNs above)")
     print(f"Now train: python3 trainer/train.py --sdata {out} --out nets/o2-distilled.o2nn --device cuda")

@@ -26,7 +26,9 @@ file(GLOB CORE_SRC
   src/movegen.cpp
   src/nnue/features.cpp
   src/nnue/network.cpp
+  src/nnue/eval_cache.cpp
   src/search/tt.cpp
+  src/search/see.cpp
   src/search/marrow.cpp
   src/search/search.cpp
   src/uci.cpp

@@ -20,7 +20,8 @@ extern std::array<Bitboard,64> KingAttacks;
 extern std::array<Bitboard,64> PawnAttacksWhite;
 extern std::array<Bitboard,64> PawnAttacksBlack;
 
-// Sliding attacks — plain (no magic) first; magic can replace later without API change
+// Sliding attacks — magic bitboards (clean-room: magics generated at
+// startup, every entry verified against the naive slider; see bitboard.cpp)
 Bitboard bishop_attacks(Square sq, Bitboard occ);
 Bitboard rook_attacks(Square sq, Bitboard occ);
 inline Bitboard queen_attacks(Square sq, Bitboard occ){

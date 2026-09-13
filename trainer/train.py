@@ -15,7 +15,7 @@ import argparse, os, struct, math, random
 import torch, torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
-from sdata import RECORD_SIZE
+from sdata import RECORD_SIZE, RECORD_SIZE_V1, RECORD_SIZE_V2
 
 INPUT_SIZE = 81920
 HALFKP = 40960
@@ -129,17 +129,24 @@ class SDataDataset(Dataset):
     def __init__(self, path, max_active=48):
         self.path=path
         self.max_active=max_active
-        self.n = os.path.getsize(path)//RECORD_SIZE
-        print(f"Dataset v2 mmap: {self.n} positions from {path} (H={H} threat)")
+        sz = os.path.getsize(path)
+        # v2 (71B) has castling+ep trailer; v1 legacy is 69B. Train ignores
+        # castling/ep (features need only board+stm) but must stride correctly.
+        if sz % RECORD_SIZE_V2 == 0 and sz % RECORD_SIZE_V1 != 0:
+            self.rs = RECORD_SIZE_V2
+        else:
+            self.rs = RECORD_SIZE_V1
+        self.n = sz // self.rs
+        print(f"Dataset v2 mmap: {self.n} positions from {path} (H={H} threat, record {self.rs}B)")
         # mmap as raw bytes for zero-copy access
         self.data = np.memmap(path, dtype=np.uint8, mode='r')
         # verify size
-        assert self.data.size >= self.n * RECORD_SIZE
+        assert self.data.size >= self.n * self.rs
     def __len__(self): return self.n
     def __getitem__(self, i):
-        off = i * RECORD_SIZE
-        # slice without copy where possible, then copy small 69B record to parse
-        b = self.data[off:off+RECORD_SIZE]
+        off = i * self.rs
+        # slice without copy where possible, then copy small record to parse
+        b = self.data[off:off+self.rs]
         # numpy slice is still memmap view; convert to bytes via tobytes for struct
         # faster: use memoryview
         board = b[0:64].copy()  # 64B
@@ -168,7 +175,11 @@ def train(args):
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
 
-    ds = SDataDataset(args.sdata, max_active=args.max_active)
+    ds_paths = [p.strip() for p in args.sdata.split(",") if p.strip()]
+    datasets = [SDataDataset(p, max_active=args.max_active) for p in ds_paths]
+    ds = datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
+    if len(datasets) > 1:
+        print(f"Mixed {len(datasets)} datasets: {[len(d) for d in datasets]}")
     n_train = int(len(ds)*0.95)
     g = torch.Generator().manual_seed(42)
     train_ds, val_ds = torch.utils.data.random_split(ds, [n_train, len(ds)-n_train], generator=g)
@@ -269,7 +280,9 @@ def train(args):
 
 if __name__=="__main__":
     ap=argparse.ArgumentParser()
-    ap.add_argument("--sdata", required=True)
+    ap.add_argument("--sdata", required=True,
+                    help="sdata file, or comma-separated list to mix "
+                         "(e.g. match games + base pool, each auto-detects v1/v2)")
     ap.add_argument("--out", default="nets/o2-v1.o2nn")
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--batch", type=int, default=512, help="micro-batch that fits 4GB (default 512)")
