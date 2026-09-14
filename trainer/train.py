@@ -32,6 +32,7 @@ def feature_indices_v2(board, stm):
     occ = set(int(i) for i in range(64) if board[i]!=12)
     attacked = set()
     for s, p in enumerate(board):
+        p = int(p)  # numpy uint8 scalar -> python int (numpy>=2 strictness)
         if p==12: continue
         col = 0 if p < 6 else 1
         if col == stm: continue
@@ -65,6 +66,7 @@ def feature_indices_v2(board, stm):
                     nr+=dr; nf+=df
     out=[]
     for s, p in enumerate(board):
+        p = int(p)  # numpy uint8 scalar -> python int (numpy>=2 raises on overflow ops)
         if p==12: continue
         if p==5 or p==11: continue
         pc10 = p if p<6 else (p-6)+5
