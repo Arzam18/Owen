@@ -443,21 +443,32 @@ static void start_search(const search::SearchLimits& lim){
     });
 }
 
+std::string run_bench(int depth){
+    depth = std::max(1, std::min(depth, 10));
+    search::Searcher bsearch;
+    Position bp;
+    bp.set_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    bsearch.set_position(bp);
+    search::SearchLimits lim; lim.depth = depth;
+    std::atomic<bool> bst{false};
+    auto t0=std::chrono::steady_clock::now();
+    auto res = bsearch.search(lim, bst, nullptr);
+    auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-t0).count();
+    uint64_t h=bsearch.eval_cache().hits(), m=bsearch.eval_cache().misses();
+    double hr = (h+m) ? 100.0*double(h)/double(h+m) : 0.0;
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "bench depth %d nodes %llu nps %lld time %lldms bestmove %s evalhit %.1f%%",
+        depth, (unsigned long long)res.nodes,
+        ms ? (long long)(res.nodes*1000ULL/std::max<int64_t>(1,ms)) : 0,
+        (long long)ms, move_to_uci(res.bestMove).c_str(), hr);
+    return std::string(buf);
+}
+
 void uci_loop(){
     init_attacks();
     Position::init_zobrist();
-#ifdef OWEN_EMBED_NET
-    extern const unsigned char g_embedded_net[];
-    extern const size_t g_embedded_net_size;
-    {
-        const unsigned char* data = g_embedded_net;
-        size_t sz = g_embedded_net_size;
-        if(sz >= 8 && data[0]=='O' && data[1]=='2' && data[2]=='N' && data[3]=='N'){
-            if(nnue::g_network.load_from_memory(data, sz))
-                std::cerr << "info string Owen 2 embedded net loaded (" << sz << " bytes)\n";
-        }
-    }
-#endif
 
     g_pos.set_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     g_searcher.set_position(g_pos);
@@ -565,25 +576,7 @@ void uci_loop(){
             if(g_searching.load()){
                 safePrint("info string bench: search in progress, try later");
             } else {
-                search::Searcher bsearch;
-                Position bp;
-                bp.set_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-                bsearch.set_position(bp);
-                search::SearchLimits lim; lim.depth = depth;
-                std::atomic<bool> bst{false};
-                auto t0=std::chrono::steady_clock::now();
-                auto res = bsearch.search(lim, bst, nullptr);
-                auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now()-t0).count();
-                uint64_t h=bsearch.eval_cache().hits(), m=bsearch.eval_cache().misses();
-                double hr = (h+m) ? 100.0*double(h)/double(h+m) : 0.0;
-                char buf[256];
-                std::snprintf(buf, sizeof(buf),
-                    "bench depth %d nodes %llu nps %lld time %lldms bestmove %s evalhit %.1f%%",
-                    depth, (unsigned long long)res.nodes,
-                    ms ? (long long)(res.nodes*1000ULL/std::max<int64_t>(1,ms)) : 0,
-                    (long long)ms, move_to_uci(res.bestMove).c_str(), hr);
-                safePrint(buf);
+                safePrint(run_bench(depth));
             }
         } else if(t=="help"){
             safePrint("Owen 2 UCI — commands: uci, isready, ucinewgame, position, go, stop, ponderhit, quit, d, perft [n], bench [depth]");

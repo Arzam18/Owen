@@ -42,6 +42,8 @@ public:
     void set_show_wdl(bool v){ showWDL_ = v; }
     void set_limit_strength(bool v){ limitStrength_ = v; }
     void set_uci_elo(int e){ uciElo_ = std::clamp(e, 1320, 4100); }
+    void set_policy_blend(double b){ marrowCfg_.policy_blend = std::clamp(b, 0.0, 1.0); }
+    void set_dirichlet(double eps, double alpha){ marrowCfg_.dirichlet_eps = eps; marrowCfg_.dirichlet_alpha = alpha; }
     int64_t elo_node_cap() const; // -1 = no cap
     void new_game(){ tt_.clear(); evalCache_.clear(); }
     void set_position(const Position& p){ pos_=p; }

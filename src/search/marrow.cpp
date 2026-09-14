@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <random>
 
 namespace owen2::search {
 
@@ -131,11 +132,42 @@ void MarrowTree::expand_node(MarrowNode* node, const Position& pos){
     double maxS = nmoves?scored[0].score:0;
     double sum=0; double ex[kMaxMoves];
     for(int i=0;i<nmoves;++i){ ex[i]=std::exp((scored[i].score-maxS)/400.0); sum+=ex[i]; }
-    // Clamp any single prior to 0.30 so one child can't dominate UCB exploration
+    // Learned policy head (Lc0-style PUCT priors, own code): blend the
+    // handcrafted softmax with the net's policy when a v3 net is loaded.
+    // Dirichlet noise at the root keeps self-play diverse (training only).
+    const auto& net = nnue::g_network;
+    bool usePol = cfg_.policy_blend > 0 && net.loaded && net.has_policy;
+    double cap = usePol ? 0.90 : 0.30;
+    // Clamp any single prior so one child can't dominate UCB exploration
     // forever after a lucky TT hit. This lets Marrow actually search.
-    for(int i=0;i<nmoves;++i) ex[i] = std::min(ex[i] / sum, 0.30);
+    for(int i=0;i<nmoves;++i) ex[i] = std::min(ex[i] / sum, cap);
     // Renormalize after clamp (rare, but keeps sum==1)
     { double s2=0; for(int i=0;i<nmoves;++i) s2+=ex[i]; if(s2>1e-9) for(int i=0;i<nmoves;++i) ex[i]/=s2; sum=1.0; }
+    if(usePol){
+        nnue::Accumulator acc{};
+        refresh_accumulator(pos, acc, net.feature_weights.data());
+        const auto& avec = (pos.side_to_move()==WHITE) ? acc.white : acc.black;
+        std::array<int16_t, nnue::Network::L2> l2{};
+        net.hidden_l2(avec, l2);
+        double mx = -1e30; double lg[kMaxMoves];
+        for(int i=0;i<nmoves;++i){
+            lg[i] = net.policy_logit(l2, nnue::Network::policy_index(scored[i].m));
+            if(lg[i] > mx) mx = lg[i];
+        }
+        double s = 0; double pp[kMaxMoves];
+        for(int i=0;i<nmoves;++i){ pp[i]=std::exp(lg[i]-mx); s+=pp[i]; }
+        if(s > 1e-9) for(int i=0;i<nmoves;++i) pp[i]/=s;
+        if(node->depth == 0 && cfg_.dirichlet_eps > 0){
+            thread_local std::mt19937 drng(0xD17C);
+            std::gamma_distribution<double> gam(cfg_.dirichlet_alpha, 1.0);
+            double gs = 0; double nu[kMaxMoves];
+            for(int i=0;i<nmoves;++i){ nu[i]=gam(drng); gs+=nu[i]; }
+            if(gs > 1e-9) for(int i=0;i<nmoves;++i){
+                pp[i] = (1.0 - cfg_.dirichlet_eps) * pp[i] + cfg_.dirichlet_eps * (nu[i] / gs);
+            }
+        }
+        for(int i=0;i<nmoves;++i) ex[i] = (1.0 - cfg_.policy_blend) * ex[i] + cfg_.policy_blend * pp[i];
+    }
     node->children.reserve(nmoves);
     for(int i=0;i<nmoves;++i){
         auto child = std::make_unique<MarrowNode>();
