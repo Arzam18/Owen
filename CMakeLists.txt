@@ -57,6 +57,10 @@ target_link_libraries(owen2-perft PRIVATE owen2_core)
 add_executable(owen2-sdata src/sdata_gen.cpp)
 target_link_libraries(owen2-sdata PRIVATE owen2_core)
 
+# ── binpack <-> sdata converter (ecosystem .binpack format, own games) ──
+add_executable(owen2-binpack2sdata src/binpack2sdata.cpp)
+target_link_libraries(owen2-binpack2sdata PRIVATE owen2_core)
+
 # ── tests ─────────────────────────────────────────────────────────
 enable_testing()
 file(GLOB TEST_SRC tests/*.cpp)

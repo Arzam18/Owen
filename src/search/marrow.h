@@ -52,6 +52,10 @@ struct MarrowConfig {
     double long_depth_C_decay = 0.995; // slower decay past depth 12
     int classical_depth = 12;    // depth where we switch to long-depth mode
     double proven_bonus = 2.0;   // boost proven lines at deep search
+    // Learned policy head (Lc0-style PUCT priors, own code)
+    double policy_blend = 0.0;   // 0 = handcrafted only; 0.7 typical with v3 net
+    double dirichlet_eps = 0.0;  // root noise mix (self-play/training only)
+    double dirichlet_alpha = 0.3;// noise concentration
 };
 
 class MarrowTree {

@@ -59,6 +59,14 @@ int Network::forward(const std::array<int16_t,H>& acc) const {
         l1[o] = int16_t(s);
     }
     std::array<int16_t, L2> l2{};
+    hidden_l2_from_l1(l1, l2);
+    int32_t out = out_bias;
+    for(int i=0;i<L2;++i) out += (int32_t)l2[i] * (int32_t)out_weights[i];
+    out >>= 6;
+    return (int)out;
+}
+
+void Network::hidden_l2_from_l1(const std::array<int16_t,L1>& l1, std::array<int16_t,L2>& l2) const {
     for(int o=0;o<L2;++o){
         int32_t s = l2_bias[o];
         for(int i=0;i<L1;++i) s += (int32_t)l1[i] * (int32_t)l2_weights[o*L1 + i];
@@ -66,10 +74,44 @@ int Network::forward(const std::array<int16_t,H>& acc) const {
         s = std::clamp<int32_t>(s, 0, 127);
         l2[o] = int16_t(s);
     }
-    int32_t out = out_bias;
-    for(int i=0;i<L2;++i) out += (int32_t)l2[i] * (int32_t)out_weights[i];
-    out >>= 6;
-    return (int)out;
+}
+
+void Network::hidden_l2(const std::array<int16_t,H>& acc, std::array<int16_t,L2>& l2) const {
+    std::array<int8_t, H> h0{};
+    for(int i=0;i<H;++i){
+        int32_t v = (int32_t)acc[i] + feature_bias[i];
+        v >>= 6;
+        v = std::clamp<int32_t>(v, 0, 127);
+        h0[i] = int8_t(v);
+    }
+    std::array<int16_t, L1> l1{};
+    for(int o=0;o<L1;++o){
+        int32_t s = l1_bias[o];
+#if defined(__AVX2__)
+        s += dot_u8_s8_avx2(h0.data(), (const int8_t*)&l1_weights[o*H], H);
+#else
+        for(int i=0;i<H;++i) s += (int32_t)h0[i] * (int32_t)l1_weights[o*H + i];
+#endif
+        s >>= 6;
+        s = std::clamp<int32_t>(s, 0, 127);
+        l1[o] = int16_t(s);
+    }
+    hidden_l2_from_l1(l1, l2);
+}
+
+int Network::policy_index(Move m) {
+    int fr = move_from(m), to = move_to(m);
+    int promo = is_promo(m) ? (int)move_promo(m) : 0;
+    if(promo >= 1 && promo <= 4) return 4096 + (promo - 1) * 64 + to;
+    return fr * 64 + to;
+}
+
+float Network::policy_logit(const std::array<int16_t,L2>& l2, int polIdx) const {
+    if(!has_policy || polIdx < 0 || polIdx >= NPOL) return 0.0f;
+    int32_t s = pol_bias[polIdx];
+    const int8_t* w = pol_weights.data() + (size_t)polIdx * L2;
+    for(int i=0;i<L2;++i) s += (int32_t)l2[i] * (int32_t)w[i];
+    return (float)s / 64.0f;
 }
 
 int Network::evaluate(const Position& pos, Accumulator& acc) const {
@@ -169,7 +211,7 @@ bool Network::load_from_memory(const unsigned char* data, size_t size){
     uint32_t ver, h;
     std::memcpy(&ver, data+4, 4); std::memcpy(&h, data+8, 4);
     if(h != (uint32_t)H) return false;
-    if(ver!=1 && ver!=2) return false;
+    if(ver!=1 && ver!=2 && ver!=3) return false;
     size_t off=12;
     auto need = [&](size_t n){ return off + n <= size; };
     feature_weights.resize((size_t)INPUT_SIZE * H);
@@ -181,7 +223,19 @@ bool Network::load_from_memory(const unsigned char* data, size_t size){
     if(!need(L1*L2)) return false; std::memcpy(l2_weights.data(), data+off, L1*L2); off+=L1*L2;
     if(!need(L2*sizeof(int16_t))) return false; std::memcpy(l2_bias.data(), data+off, L2*sizeof(int16_t)); off+=L2*sizeof(int16_t);
     if(!need(L2)) return false; std::memcpy(out_weights.data(), data+off, L2); off+=L2;
-    if(!need(sizeof(int16_t))) return false; std::memcpy(&out_bias, data+off, sizeof(int16_t));
+    if(!need(sizeof(int16_t))) return false; std::memcpy(&out_bias, data+off, sizeof(int16_t)); off+=sizeof(int16_t);
+    has_policy = false;
+    pol_weights.clear(); pol_bias.clear();
+    if(ver == 3){
+        size_t pw = (size_t)Network::NPOL * L2;
+        size_t pb = (size_t)Network::NPOL * sizeof(int16_t);
+        if(!need(pw + pb)) return false;
+        pol_weights.resize(pw);
+        std::memcpy(pol_weights.data(), data+off, pw); off+=pw;
+        pol_bias.resize(Network::NPOL);
+        std::memcpy(pol_bias.data(), data+off, pb); off+=pb;
+        has_policy = true;
+    }
     loaded=true; return true;
 }
 bool Network::save(const std::string& path) const {
