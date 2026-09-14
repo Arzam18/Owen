@@ -244,7 +244,7 @@ def train(args):
     ce_fn = nn.CrossEntropyLoss()
 
     # DeepSeek #1: AMP scaler
-    scaler = torch.amp.GradScaler('cuda', enabled=(args.amp and device=="cuda"))
+    scaler = torch.cuda.amp.GradScaler(enabled=(args.amp and device=="cuda"))
     best_val=float("inf")
 
     for epoch in range(1, args.epochs+1):
@@ -255,7 +255,7 @@ def train(args):
         for step, (idx, target, pol) in enumerate(train_loader, 1):
             idx, target = idx.to(device, non_blocking=True), target.to(device, non_blocking=True)
             # autocast FP16 for forward — Tensor Core on RTX 2050
-            with torch.amp.autocast('cuda', enabled=(args.amp and device=="cuda")):
+            with torch.cuda.amp.autocast(enabled=(args.amp and device=="cuda")):
                 pred, plogits = net(idx)
                 loss = loss_fn(pred, target)
                 if args.policy and plogits is not None:
@@ -295,7 +295,7 @@ def train(args):
         with torch.no_grad():
             for idx, target, pol in val_loader:
                 idx, target = idx.to(device, non_blocking=True), target.to(device, non_blocking=True)
-                with torch.amp.autocast('cuda', enabled=(args.amp and device=="cuda")):
+                with torch.cuda.amp.autocast(enabled=(args.amp and device=="cuda")):
                     pred, plogits = net(idx)
                 vloss += loss_fn(pred, target).item()*len(target)
                 if args.policy and plogits is not None:
