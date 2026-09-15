@@ -294,6 +294,26 @@ Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
         if(best > alpha) alpha = best;
         if(alpha >= beta) break;
     }
+    // Checks in quiet positions: after captures, search quiet moves that give
+    // check (discovered attacks, skewers, pins). Only 1 ply ahead to stay cheap.
+    if(depth > 1){
+        Move qlist[kMaxMoves];
+        int nq = generate_legal_buf(qscratch_[qslot], pos, qlist, kMaxMoves);
+        for(int i=0;i<nq;++i){
+            Move m = qlist[i];
+            if(is_capture(m) || is_promo(m)) continue;
+            pos.do_move(m);
+            if(!pos.in_check()){
+                pos.undo_move(m);
+                continue;
+            }
+            Value v = Value(-quiescence(pos, Value(-beta), Value(-alpha), depth - 2));
+            pos.undo_move(m);
+            if(v > best) best = v;
+            if(best > alpha) alpha = best;
+            if(alpha >= beta) break;
+        }
+    }
     return best;
 }
 
