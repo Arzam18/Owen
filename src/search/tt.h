@@ -28,7 +28,11 @@ private:
     std::vector<TTEntry> table_;
     size_t mask_=0;
     uint8_t age_=0;
-    mutable std::mutex mu_; // guards probe/store for Lazy SMP (fine-grained enough at UCI time controls)
+    // Lazy SMP scaling: one lock for the whole table serializes 12 cores.
+    // Split by bucket so probes/stores on different buckets never collide.
+    static constexpr int kShards = 64;
+    mutable std::mutex mu_[kShards];
+    size_t shard_of(size_t idx) const { return (idx >> 6) & (kShards - 1); }
 };
 
 } // namespace owen2

@@ -22,8 +22,8 @@ TTEntry* TranspositionTable::probe(uint64_t key, bool &hit){
     Move m = probe_move(key, hit);
     // probe_move already set hit; also fill snapshot for callers that read value/depth
     {
-        std::lock_guard<std::mutex> lk(mu_);
         size_t idx = (key ^ (key>>32)) & mask_;
+        std::lock_guard<std::mutex> lk(mu_[shard_of(idx)]);
         snap = table_[idx];
     }
     (void)m;
@@ -31,16 +31,16 @@ TTEntry* TranspositionTable::probe(uint64_t key, bool &hit){
 }
 Move TranspositionTable::probe_move(uint64_t key, bool &hit){
     if(table_.empty()){ hit=false; return 0; }
-    std::lock_guard<std::mutex> lk(mu_);
     size_t idx = (key ^ (key>>32)) & mask_;
+    std::lock_guard<std::mutex> lk(mu_[shard_of(idx)]);
     const TTEntry &e = table_[idx];
     hit = (e.key == key);
     return hit ? e.move : 0;
 }
 void TranspositionTable::store(uint64_t key, Value v, int depth, uint8_t flag, Move m){
     if(table_.empty()) return;
-    std::lock_guard<std::mutex> lk(mu_);
     size_t idx = (key ^ (key>>32)) & mask_;
+    std::lock_guard<std::mutex> lk(mu_[shard_of(idx)]);
     TTEntry &e = table_[idx];
     // replacement: empty, newer generation, or deeper (with +2 slack) wins
     if(e.key==0 || depth+2 >= e.depth || e.age != age_){
