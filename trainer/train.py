@@ -32,6 +32,7 @@ def feature_indices_v2(board, stm):
     occ = set(int(i) for i in range(64) if board[i]!=12)
     attacked = set()
     for s, p in enumerate(board):
+        p = int(p)  # numpy uint8 scalar -> python int (numpy>=2 strictness)
         if p==12: continue
         col = 0 if p < 6 else 1
         if col == stm: continue
@@ -65,6 +66,7 @@ def feature_indices_v2(board, stm):
                     nr+=dr; nf+=df
     out=[]
     for s, p in enumerate(board):
+        p = int(p)  # numpy uint8 scalar -> python int (numpy>=2 raises on overflow ops)
         if p==12: continue
         if p==5 or p==11: continue
         pc10 = p if p<6 else (p-6)+5
@@ -136,7 +138,43 @@ class OwenNetV2(nn.Module):
                 pb = (self.pol.bias.detach().cpu().numpy() * 64).round().clip(-32768,32767).astype(np.int16)
                 f.write(pw.tobytes())
                 f.write(pb.tobytes())
-        print(f"Exported v2 {path}  ({os.path.getsize(path)} bytes)")
+        print(f"Exported  {path}  ({os.path.getsize(path)} bytes)")
+
+    def load_o2nn(self, path):
+        data = open(path,"rb").read()
+        off = 0
+        def take(n):
+            nonlocal off
+            x = data[off:off+n]; off += n
+            return x
+        magic = take(4)
+        assert magic == b"O2NN", f"bad magic {magic}"
+        ver, Hr = struct.unpack("<II", take(8))
+        assert Hr == H, f"hidden {Hr} != {H}"
+        fw = np.frombuffer(take(INPUT_SIZE*H*2), dtype=np.int16).reshape(INPUT_SIZE, H)
+        fb = np.frombuffer(take(H*2), dtype=np.int16)
+        l1w = np.frombuffer(take(L1*H), dtype=np.int8).reshape(L1, H)
+        l1b = np.frombuffer(take(L1*2), dtype=np.int16)
+        l2w = np.frombuffer(take(L2*L1), dtype=np.int8).reshape(L2, L1)
+        l2b = np.frombuffer(take(L2*2), dtype=np.int16)
+        ow  = np.frombuffer(take(L2), dtype=np.int8).flatten()
+        ob  = np.frombuffer(take(2), dtype=np.int16)[0]
+        self.ft.weight.data.copy_(torch.from_numpy(fw.astype(np.float32)/64.0))
+        self.ft_bias.data.copy_(torch.from_numpy(fb.astype(np.float32)/64.0))
+        self.l1.weight.data.copy_(torch.from_numpy(l1w.astype(np.float32)/64.0))
+        self.l1.bias.data.copy_(torch.from_numpy(l1b.astype(np.float32)/64.0))
+        self.l2.weight.data.copy_(torch.from_numpy(l2w.astype(np.float32)/64.0))
+        self.l2.bias.data.copy_(torch.from_numpy(l2b.astype(np.float32)/64.0))
+        self.out.weight.data.copy_(torch.from_numpy(ow.astype(np.float32)/64.0))
+        self.out.bias.data.copy_(torch.tensor(float(ob)/64.0))
+        if self.with_policy and off < len(data):
+            rest = np.frombuffer(data[off:], dtype=np.uint8)
+            nb = NPOL*2
+            pw = rest[:len(rest)-nb].view(np.int8).reshape(NPOL, L2)
+            pb = rest[-nb:].view(np.int16).reshape(NPOL)
+            self.pol.weight.data.copy_(torch.from_numpy(pw.astype(np.float32)/64.0))
+            self.pol.bias.data.copy_(torch.from_numpy(pb.astype(np.float32)/64.0))
+        print(f"Loaded {path}  ver={ver}  policy={'yes' if (self.with_policy and off<len(data)) else 'no'}")
 
 # DeepSeek trick #4: mmap dataset — read whole file once via memmap, no open/seek per sample
 class SDataDataset(Dataset):
@@ -212,6 +250,8 @@ def train(args):
     val_loader = DataLoader(val_ds, batch_size=args.batch*4, shuffle=False, num_workers=nw, pin_memory=(device=="cuda"), prefetch_factor=2 if nw>0 else None, persistent_workers=(nw>0))
 
     net = OwenNetV2(with_policy=args.policy).to(device)
+    if args.init:
+        net.load_o2nn(args.init)
     # torch.compile = DeepSeek fused kernels (inductor)
     if args.compile and hasattr(torch, "compile"):
         try:
@@ -242,7 +282,7 @@ def train(args):
     ce_fn = nn.CrossEntropyLoss()
 
     # DeepSeek #1: AMP scaler
-    scaler = torch.amp.GradScaler('cuda', enabled=(args.amp and device=="cuda"))
+    scaler = torch.cuda.amp.GradScaler(enabled=(args.amp and device=="cuda"))
     best_val=float("inf")
 
     for epoch in range(1, args.epochs+1):
@@ -253,7 +293,7 @@ def train(args):
         for step, (idx, target, pol) in enumerate(train_loader, 1):
             idx, target = idx.to(device, non_blocking=True), target.to(device, non_blocking=True)
             # autocast FP16 for forward — Tensor Core on RTX 2050
-            with torch.amp.autocast('cuda', enabled=(args.amp and device=="cuda")):
+            with torch.cuda.amp.autocast(enabled=(args.amp and device=="cuda")):
                 pred, plogits = net(idx)
                 loss = loss_fn(pred, target)
                 if args.policy and plogits is not None:
@@ -293,7 +333,7 @@ def train(args):
         with torch.no_grad():
             for idx, target, pol in val_loader:
                 idx, target = idx.to(device, non_blocking=True), target.to(device, non_blocking=True)
-                with torch.amp.autocast('cuda', enabled=(args.amp and device=="cuda")):
+                with torch.cuda.amp.autocast(enabled=(args.amp and device=="cuda")):
                     pred, plogits = net(idx)
                 vloss += loss_fn(pred, target).item()*len(target)
                 if args.policy and plogits is not None:
@@ -340,6 +380,7 @@ if __name__=="__main__":
     ap.add_argument("--policy", action=argparse.BooleanOptionalAction, default=False,
                     help="train a policy head (needs v3 sdata with moves); exports ver=3 net")
     ap.add_argument("--pol-w", type=float, default=1000.0, help="policy CE weight in joint loss (value MSE is ~1e5 scale, CE ~8)")
+    ap.add_argument("--init", default=None, help="warm-start from this .o2nn (ver 2 or 3)")
     args=ap.parse_args()
     if args.gpu: args.device="cuda"
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
