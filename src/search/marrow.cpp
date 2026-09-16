@@ -18,6 +18,18 @@ void MarrowTree::buildLogTab(){
     MarrowTree::logTabReady_ = true;
 }
 
+// Static members for exact tanh table.
+double MarrowTree::tanhTab_[MarrowTree::kHistN];
+bool MarrowTree::tanhTabReady_ = false;
+void MarrowTree::buildTanhTab(){
+    if(MarrowTree::tanhTabReady_) return;
+    for(int i=0;i<MarrowTree::kHistN;++i){
+        int h = MarrowTree::kHistMin + i;
+        MarrowTree::tanhTab_[i] = std::tanh(h / 8192.0);
+    }
+    MarrowTree::tanhTabReady_ = true;
+}
+
 void MarrowTree::buildCEff(){
     for(int d = 0; d < kMaxDepth; ++d){
         if(d < cfg_.classical_depth)
@@ -28,7 +40,8 @@ void MarrowTree::buildCEff(){
     }
 }
 
-double MarrowTree::ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits) const {
+double MarrowTree::ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits,
+                             double parentLog, double parentSqrt) const {
     double proven_bonus = (child->depth >= cfg_.classical_depth) ? cfg_.proven_bonus : 1.0;
     // Node-relative flags: a proven-LOSS child is mated for the opponent =
     // best possible for the parent; a proven-WIN child wins for the opponent.
@@ -43,10 +56,10 @@ double MarrowTree::ucb_score(const MarrowNode* parent, const MarrowNode* child, 
     double q_parent = -q;
     // depth-decayed exploration: slower decay past classical_depth for long-depth search
     double C_eff = cEff_[child->depth < kMaxDepth ? child->depth : kMaxDepth - 1];
-    double explore = C_eff * std::sqrt(fastLog(parentVisits) / double(child->visits));
-    double prior_term = cfg_.policy_weight * child->prior * std::sqrt(double(parentVisits)) / (1+child->visits);
+    double explore = C_eff * std::sqrt(parentLog / double(child->visits));
+    double prior_term = cfg_.policy_weight * child->prior * parentSqrt / (1+child->visits);
     // history heuristic — quiet moves that caused beta cuts get boost (scales to classical)
-    double hist = cfg_.history_weight * std::tanh(child->history / 8192.0);
+    double hist = cfg_.history_weight * fastTanh(child->history);
     // progressive widening penalty: beyond base, need more visits to be considered
     // at long depth, widen more (explore forks) but with proof bonus
     int widen = cfg_.prog_widen_base + (child->depth >= cfg_.classical_depth ? 2 : 0);
@@ -213,22 +226,26 @@ void MarrowTree::select_path(Position& pos, std::vector<MarrowNode*>& path){
         int bestIdx = provenIdx;
         double bestScore = -1e100;
         if(bestIdx<0){
+            const double parentLog = fastLog(cur->visits);
+            const double parentSqrt = std::sqrt(double(cur->visits));
             for(size_t i=0;i<cur->children.size();++i){
                 if(cur->children[i]->is_proven_win) continue; // opponent wins there
-                double s = ucb_score(cur, cur->children[i].get(), cur->visits);
+                double s = ucb_score(cur, cur->children[i].get(), cur->visits, parentLog, parentSqrt);
                 if(s > bestScore){ bestScore=s; bestIdx=(int)i; }
             }
         }
         if(bestIdx<0){
             // all children proven wins for the opponent — delay mate maximally
+            const double parentLog = fastLog(cur->visits);
+            const double parentSqrt = std::sqrt(double(cur->visits));
             int maxD=-1;
             for(size_t i=0;i<cur->children.size();++i){
                 const auto& ch = cur->children[i];
                 if(ch->proven_depth > maxD ||
                    (ch->proven_depth == maxD && bestIdx >= 0 &&
-                    ucb_score(cur, ch.get(), cur->visits) > bestScore)){
+                    ucb_score(cur, ch.get(), cur->visits, parentLog, parentSqrt) > bestScore)){
                     maxD = ch->proven_depth; bestIdx=(int)i;
-                    bestScore = ucb_score(cur, ch.get(), cur->visits);
+                    bestScore = ucb_score(cur, ch.get(), cur->visits, parentLog, parentSqrt);
                 }
             }
         }

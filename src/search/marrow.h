@@ -67,6 +67,8 @@ public:
     {
         root_ = std::make_unique<MarrowNode>();
         root_->expanded=false;
+        buildLogTab();
+        buildTanhTab();
         buildCEff();
     }
 
@@ -90,13 +92,24 @@ private:
     // Precomputed depth→C_eff table: kills pow() from ucb_score.
     static constexpr int kMaxDepth = 256;
     double cEff_[kMaxDepth]{};
-    // fast log table for ucb_score: log(n+1) for n < 2049 (covers virtually all visits).
-    static constexpr int kLogN = 2049;
+    // fast log table for ucb_score: log(n+1) for n < 32769 (root visits grow past 2048).
+    static constexpr int kLogN = 32769;
     static double logTab_[kLogN];
     static bool logTabReady_;
     static void buildLogTab();
     static inline double fastLog(int n){
         return (n >= 0 && n < kLogN) ? logTab_[n] : std::log(double(n + 1));
+    }
+    // exact tanh(h/8192) table: history is a bounded int (decay keeps |h|<16384).
+    static constexpr int kHistMin = -16384, kHistMax = 16384;
+    static constexpr int kHistN = kHistMax - kHistMin + 1;
+    static double tanhTab_[kHistN];
+    static bool tanhTabReady_;
+    static void buildTanhTab();
+    static inline double fastTanh(int h){
+        if(h < kHistMin) h = kHistMin;
+        if(h > kHistMax) h = kHistMax;
+        return tanhTab_[h - kHistMin];
     }
     // history table [from 64][to 64] for classical scaling — simple but effective
     int history_[64][64]{};
@@ -120,7 +133,8 @@ private:
     void select_path(Position& pos, std::vector<MarrowNode*>& path);
 
     void expand_node(MarrowNode* node, const Position& pos);
-    double ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits) const;
+    double ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits,
+                     double parentLog, double parentSqrt) const;
     void buildCEff();
     Value evaluate_leaf(Position& pos);
     Value quiescence(Position& pos, Value alpha, Value beta, int depth);
