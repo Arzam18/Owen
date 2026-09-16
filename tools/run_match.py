@@ -45,7 +45,7 @@ def parse_opts(s):
     return d
 
 
-def play_game(white_spec, black_spec, fen, movetime, resign_cp, resign_plies,
+def play_game(white_spec, black_spec, fen, movetime, nodes, resign_cp, resign_plies,
               max_plies):
     board = chess.Board(fen)
     game = chess.pgn.Game()
@@ -81,7 +81,7 @@ def play_game(white_spec, black_spec, fen, movetime, resign_cp, resign_plies,
             turn = "w" if board.turn == chess.WHITE else "b"
             eng = engines[turn]
             try:
-                res = eng.play(board, chess.engine.Limit(time=movetime),
+                res = eng.play(board, chess.engine.Limit(time=movetime, nodes=nodes),
                                info=chess.engine.INFO_SCORE)
             except Exception as e:
                 print(f"  engine {turn} error: {e}")
@@ -159,6 +159,8 @@ def main():
     ap.add_argument("--games", type=int, default=0,
                     help="opening PAIRS (x2 games with swapped colors); 0 = whole book")
     ap.add_argument("--movetime", type=float, default=0.3)
+    ap.add_argument("--nodes", type=int, default=0,
+                    help="per-move node budget (0 = off; overrides movetime at 0)")
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--out", default="tools/logs/match.pgn")
     ap.add_argument("--resign-cp", type=int, default=700)
@@ -187,7 +189,7 @@ def main():
 
     def one(job):
         wspec, bspec, fen = job
-        r, g = play_game(wspec, bspec, fen, args.movetime,
+        r, g = play_game(wspec, bspec, fen, args.movetime, args.nodes,
                          args.resign_cp, args.resign_plies, args.max_plies)
         with lock:
             # attribute from White(outer)-Black(outer) perspective
