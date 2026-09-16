@@ -8,7 +8,7 @@
 namespace owen2::search {
 
 Searcher::Searcher(){
-    tt_.resize(64);
+    set_tt_size(64);
     // Don't burn 32k visits on startpos where handcrafted eval is 0 for every
     // quiet line — g1f3/b1c3 only emerge from noise after ~30k visits.
     // Depth 4 with 12k will still show g1f3 in the root dump; the UCI f2f3

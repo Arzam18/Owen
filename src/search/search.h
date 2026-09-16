@@ -33,7 +33,16 @@ struct SearchResult {
 class Searcher {
 public:
     Searcher();
-    void set_tt_size(int mb){ tt_.resize(mb); }
+    void set_tt_size(int mb){
+        tt_.resize(mb);
+        // Size the eval cache with the TT (~1/4 of Hash bytes): 1M entries per
+        // 16MB TT. The old fixed 2^16=64k table thrashed past ~100k QS evals.
+        int p = 14;
+        for(int m = std::max(1, mb); m > 1; m >>= 1) ++p;
+        p = std::clamp(p, 16, 26);
+        size_t entries_pow2 = size_t(p);
+        evalCache_.resize(entries_pow2);
+    }
     void set_threads(int n){ threads_=std::max(1,n); }
     void set_marrow_c(double c){ marrowCfg_.C = c; }
     void set_multipv(int n){ marrowCfg_.multiPV = std::max(1,n); }
@@ -45,6 +54,7 @@ public:
     void set_policy_blend(double b){ marrowCfg_.policy_blend = std::clamp(b, 0.0, 1.0); }
     void set_dirichlet(double eps, double alpha){ marrowCfg_.dirichlet_eps = eps; marrowCfg_.dirichlet_alpha = alpha; }
     void set_bound_prune(bool on){ marrowCfg_.bound_prune = on; }
+    void set_best_first(bool on){ marrowCfg_.best_first = on; }
     int64_t elo_node_cap() const; // -1 = no cap
     void new_game(){ tt_.clear(); evalCache_.clear(); }
     void set_position(const Position& p){ pos_=p; }
