@@ -16,8 +16,9 @@ struct StateInfo {
     Piece captured = NO_PIECE;
     Piece moved = NO_PIECE;
     Move last_move = 0;
-    // full board snapshot for robust undo (64 bytes) — cheap vs bugs
-    std::array<Piece,64> board{};
+    // physical rook endpoints of the last castle move (undo bookkeeping)
+    Square castleRookFrom = 64;
+    Square castleRookTo = 64;
 };
 
 class Position {

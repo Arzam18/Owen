@@ -7,6 +7,27 @@
 
 namespace owen2::search {
 
+// Static members for fast log table.
+double MarrowTree::logTab_[MarrowTree::kLogN];
+bool MarrowTree::logTabReady_ = false;
+
+void MarrowTree::buildLogTab(){
+    if(MarrowTree::logTabReady_) return;
+    for(int i=0;i<MarrowTree::kLogN;++i)
+        MarrowTree::logTab_[i] = std::log(double(i + 1));
+    MarrowTree::logTabReady_ = true;
+}
+
+void MarrowTree::buildCEff(){
+    for(int d = 0; d < kMaxDepth; ++d){
+        if(d < cfg_.classical_depth)
+            cEff_[d] = cfg_.C * std::pow(cfg_.C_decay, d);
+        else
+            cEff_[d] = cfg_.C * std::pow(cfg_.C_decay, cfg_.classical_depth)
+                     * std::pow(cfg_.long_depth_C_decay, d - cfg_.classical_depth);
+    }
+}
+
 double MarrowTree::ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits) const {
     double proven_bonus = (child->depth >= cfg_.classical_depth) ? cfg_.proven_bonus : 1.0;
     // Node-relative flags: a proven-LOSS child is mated for the opponent =
@@ -21,12 +42,8 @@ double MarrowTree::ucb_score(const MarrowNode* parent, const MarrowNode* child, 
     double q = child->q();
     double q_parent = -q;
     // depth-decayed exploration: slower decay past classical_depth for long-depth search
-    double C_eff;
-    if(child->depth < cfg_.classical_depth)
-        C_eff = cfg_.C * std::pow(cfg_.C_decay, child->depth);
-    else
-        C_eff = cfg_.C * std::pow(cfg_.C_decay, cfg_.classical_depth) * std::pow(cfg_.long_depth_C_decay, child->depth - cfg_.classical_depth);
-    double explore = C_eff * std::sqrt(std::log(double(parentVisits+1)) / double(child->visits));
+    double C_eff = cEff_[child->depth < kMaxDepth ? child->depth : kMaxDepth - 1];
+    double explore = C_eff * std::sqrt(fastLog(parentVisits) / double(child->visits));
     double prior_term = cfg_.policy_weight * child->prior * std::sqrt(double(parentVisits)) / (1+child->visits);
     // history heuristic — quiet moves that caused beta cuts get boost (scales to classical)
     double hist = cfg_.history_weight * std::tanh(child->history / 8192.0);

@@ -86,7 +86,7 @@ void Position::set_fen(const std::string& fen){
     byColor_[0]=byColor_[1]=0;
     for(int c=0;c<2;++c) for(int pt=0;pt<6;++pt) byColorType_[c][pt]=0;
     for(int pt=0;pt<6;++pt) byType_[pt]=0;
-    st_={}; ply_=0; history_.clear();
+    st_={}; ply_=0; history_.clear(); history_.reserve(1024);
 
     std::istringstream iss(fen);
     std::string bstr, stm, castle, ep, half, full;
@@ -154,7 +154,6 @@ void Position::set_fen(const std::string& fen){
     if(stm_==BLACK) st_.key ^= ZobristSide;
     st_.key ^= ZobristCastle[st_.castling & 0xF];
     if(st_.ep_square!=64) st_.key ^= ZobristEP[file_of(st_.ep_square)];
-    for(int s=0;s<64;++s) st_.board[s]=board_[s];
     update_checkers();
 }
 
@@ -188,20 +187,27 @@ std::string Position::fen() const {
 }
 
 void Position::do_move(Move m){
-    // snapshot for undo
-    st_.board = [&]{ std::array<Piece,64> a{}; for(int i=0;i<64;++i) a[i]=board_[i]; return a; }();
-    // we need to store current st before mutation; copy board already done via st_.board
-    // but history needs previous st (with its board). So save st before changing, and keep board snapshot in saved copy.
-    // st_.board currently holds current board; history will hold it.
-    StateInfo prev = st_;
-    // keep board snapshot in prev (already)
-    history_.push_back(prev);
-
     Square from=move_from(m), to=move_to(m);
     int flags=move_flags(m);
     Piece moving = board_[from];
     Piece captured = board_[to];
     Color us = stm_, them = ~us;
+
+    // castle rook squares for undo (physical endpoints of the rook move)
+    st_.castleRookFrom = 64; st_.castleRookTo = 64;
+    if(flags & MoveFlag::CASTLING){
+        if(file_of(to)==6){
+            st_.castleRookFrom = make_square(7, rank_of(from));
+            st_.castleRookTo   = make_square(5, rank_of(from));
+        } else {
+            st_.castleRookFrom = make_square(0, rank_of(from));
+            st_.castleRookTo   = make_square(3, rank_of(from));
+        }
+    }
+
+    // snapshot the (cheap, boardless) pre-move state for undo
+    StateInfo prev = st_;
+    history_.push_back(prev);
 
     st_.moved = moving;
     st_.captured = captured;
@@ -225,13 +231,8 @@ void Position::do_move(Move m){
     put_piece(placed, to);
 
     if(flags & MoveFlag::CASTLING){
-        if(file_of(to)==6){
-            Square rf=make_square(7, rank_of(from)), rt=make_square(5, rank_of(from));
-            Piece rook=board_[rf]; remove_piece(rf); put_piece(rook, rt);
-        } else {
-            Square rf=make_square(0, rank_of(from)), rt=make_square(3, rank_of(from));
-            Piece rook=board_[rf]; remove_piece(rf); put_piece(rook, rt);
-        }
+        Piece rook=board_[st_.castleRookFrom];
+        remove_piece(st_.castleRookFrom); put_piece(rook, st_.castleRookTo);
     }
 
     auto clear = [&](Square sq){
@@ -258,8 +259,6 @@ void Position::do_move(Move m){
     st_.key ^= ZobristCastle[st_.castling & 0xF];
 
     ply_++;
-    // snapshot new board into st_.board
-    for(int i=0;i<64;++i) st_.board[i]=board_[i];
     update_checkers();
 }
 
@@ -267,22 +266,31 @@ void Position::undo_move(Move m){
     (void)m;
     assert(!history_.empty());
     StateInfo prev = history_.back(); history_.pop_back();
-    // restore board from prev snapshot
-    // clear current occupancy then rebuild from prev.board
-    for(int s=0;s<64;++s) board_[s]=prev.board[s];
-    // rebuild bitboards from board
-    byColor_[0]=byColor_[1]=0;
-    for(int c=0;c<2;++c) for(int pt=0;pt<6;++pt) byColorType_[c][pt]=0;
-    for(int pt=0;pt<6;++pt) byType_[pt]=0;
-    for(int s=0;s<64;++s) if(board_[s]!=NO_PIECE){
-        Piece p=board_[s];
-        Bitboard bb=sq_bb(s);
-        byColor_[color_of(p)] |= bb;
-        byColorType_[color_of(p)][type_of(p)] |= bb;
-        byType_[type_of(p)] |= bb;
-        if(type_of(p)==KING) kingSq_[color_of(p)]=s;
+
+    Square from=move_from(m), to=move_to(m);
+    int flags=move_flags(m);
+    Piece moved = st_.moved;
+    Piece captured = st_.captured;
+    Color them = stm_, us = ~them;
+
+    // reverse the board changes incrementally (no full-board rebuild)
+    remove_piece(to);
+    put_piece(moved, from);
+
+    if(flags & MoveFlag::ENPASSANT){
+        Square capSq = make_square(file_of(to), rank_of(from));
+        put_piece(captured, capSq);
+    } else if(captured != NO_PIECE){
+        put_piece(captured, to);
     }
-    stm_ = (stm_==WHITE?BLACK:WHITE);
+
+    if(flags & MoveFlag::CASTLING){
+        Piece rook = board_[st_.castleRookTo];
+        remove_piece(st_.castleRookTo);
+        put_piece(rook, st_.castleRookFrom);
+    }
+
+    stm_ = us;
     st_ = prev;
     ply_--;
 }

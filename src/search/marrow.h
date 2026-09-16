@@ -6,6 +6,7 @@
 #include "tt.h"
 #include <vector>
 #include <memory>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -66,6 +67,7 @@ public:
     {
         root_ = std::make_unique<MarrowNode>();
         root_->expanded=false;
+        buildCEff();
     }
 
     // Run search until stop() returns true or budget exhausted.
@@ -85,6 +87,17 @@ private:
     std::unique_ptr<MarrowNode> root_;
     int totalVisits_=0;
     int maxDepth_=0;
+    // Precomputed depth→C_eff table: kills pow() from ucb_score.
+    static constexpr int kMaxDepth = 256;
+    double cEff_[kMaxDepth]{};
+    // fast log table for ucb_score: log(n+1) for n < 2049 (covers virtually all visits).
+    static constexpr int kLogN = 2049;
+    static double logTab_[kLogN];
+    static bool logTabReady_;
+    static void buildLogTab();
+    static inline double fastLog(int n){
+        return (n >= 0 && n < kLogN) ? logTab_[n] : std::log(double(n + 1));
+    }
     // history table [from 64][to 64] for classical scaling — simple but effective
     int history_[64][64]{};
     // killer moves per tree-ply: quiet moves that were good for their mover
@@ -108,6 +121,7 @@ private:
 
     void expand_node(MarrowNode* node, const Position& pos);
     double ucb_score(const MarrowNode* parent, const MarrowNode* child, int parentVisits) const;
+    void buildCEff();
     Value evaluate_leaf(Position& pos);
     Value quiescence(Position& pos, Value alpha, Value beta, int depth);
     // Raw NNUE stand-pat through the eval cache (never mates/terminals).
