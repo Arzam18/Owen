@@ -16,9 +16,6 @@ struct StateInfo {
     Piece captured = NO_PIECE;
     Piece moved = NO_PIECE;
     Move last_move = 0;
-    // physical rook endpoints of the last castle move (undo bookkeeping)
-    Square castleRookFrom = 64;
-    Square castleRookTo = 64;
 };
 
 class Position {
@@ -44,6 +41,7 @@ public:
     Square king_sq(Color c) const { return kingSq_[c]; }
 
     void do_move(Move m);
+    void do_move(Move m, bool record);
     void undo_move(Move m);
     bool is_draw() const;
 

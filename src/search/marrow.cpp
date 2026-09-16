@@ -234,7 +234,7 @@ void MarrowTree::select_path(Position& pos, std::vector<MarrowNode*>& path){
         }
         if(bestIdx<0) break;
         MarrowNode* nxt = cur->children[bestIdx].get();
-        pos.do_move(nxt->move);
+        pos.do_move(nxt->move, false);
         path.push_back(nxt);
         cur = nxt;
         if(!cur->expanded) break;

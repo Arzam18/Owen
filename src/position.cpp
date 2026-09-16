@@ -187,27 +187,21 @@ std::string Position::fen() const {
 }
 
 void Position::do_move(Move m){
+    do_move(m, true);
+}
+
+void Position::do_move(Move m, bool record){
     Square from=move_from(m), to=move_to(m);
     int flags=move_flags(m);
     Piece moving = board_[from];
     Piece captured = board_[to];
     Color us = stm_, them = ~us;
 
-    // castle rook squares for undo (physical endpoints of the rook move)
-    st_.castleRookFrom = 64; st_.castleRookTo = 64;
-    if(flags & MoveFlag::CASTLING){
-        if(file_of(to)==6){
-            st_.castleRookFrom = make_square(7, rank_of(from));
-            st_.castleRookTo   = make_square(5, rank_of(from));
-        } else {
-            st_.castleRookFrom = make_square(0, rank_of(from));
-            st_.castleRookTo   = make_square(3, rank_of(from));
-        }
+    if(record){
+        // snapshot the (cheap, boardless) pre-move state for undo
+        StateInfo prev = st_;
+        history_.push_back(prev);
     }
-
-    // snapshot the (cheap, boardless) pre-move state for undo
-    StateInfo prev = st_;
-    history_.push_back(prev);
 
     st_.moved = moving;
     st_.captured = captured;
@@ -231,8 +225,11 @@ void Position::do_move(Move m){
     put_piece(placed, to);
 
     if(flags & MoveFlag::CASTLING){
-        Piece rook=board_[st_.castleRookFrom];
-        remove_piece(st_.castleRookFrom); put_piece(rook, st_.castleRookTo);
+        Square crf, crt;
+        if(file_of(to)==6){ crf = make_square(7, rank_of(from)); crt = make_square(5, rank_of(from)); }
+        else             { crf = make_square(0, rank_of(from)); crt = make_square(3, rank_of(from)); }
+        Piece rook=board_[crf];
+        remove_piece(crf); put_piece(rook, crt);
     }
 
     auto clear = [&](Square sq){
@@ -285,9 +282,12 @@ void Position::undo_move(Move m){
     }
 
     if(flags & MoveFlag::CASTLING){
-        Piece rook = board_[st_.castleRookTo];
-        remove_piece(st_.castleRookTo);
-        put_piece(rook, st_.castleRookFrom);
+        Square crf, crt;
+        if(file_of(to)==6){ crf = make_square(7, rank_of(from)); crt = make_square(5, rank_of(from)); }
+        else             { crf = make_square(0, rank_of(from)); crt = make_square(3, rank_of(from)); }
+        Piece rook = board_[crt];
+        remove_piece(crt);
+        put_piece(rook, crf);
     }
 
     stm_ = us;
