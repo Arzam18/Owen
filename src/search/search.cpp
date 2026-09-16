@@ -103,7 +103,11 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
                     ? kBudget[lim.depth] : lim.depth * 15000;
                 if(eloCap >= 0) b = (int)std::min<int64_t>(b, eloCap);
                 if(tr.total_visits() >= b) return true;
-            } else if(lim.depth >= 64){
+            } else if(lim.depth >= 64 && lim.nodes < 0){
+                // depth==64 sentinel = "no depth limit" (bare go / infinite / clock).
+                // Only the time/Elohr headroom applies; an explicit `go nodes N`
+                // is authoritative and must NOT be cut short here (was silently
+                // truncating nodes-limited A/Bs at 15k / 1.5s).
                 if(elapsed_ms() >= 1500) return true;
                 int64_t b = 15000;
                 if(eloCap >= 0) b = std::min<int64_t>(b, eloCap);
@@ -277,7 +281,7 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
                         int64_t b = perDepth;
                         if(perElo >= 0) b = std::min(b, perElo);
                         if(tr.total_visits() >= b) return true;
-                    } else if(lim.depth >= 64){
+                    } else if(lim.depth >= 64 && lim.nodes < 0){
                         if(elapsed_ms() >= 1500) return true;
                         int64_t b = perDepth;
                         if(perElo >= 0) b = std::min(b, perElo);

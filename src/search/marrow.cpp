@@ -228,8 +228,17 @@ void MarrowTree::select_path(Position& pos, std::vector<MarrowNode*>& path){
         if(bestIdx<0){
             const double parentLog = fastLog(cur->visits);
             const double parentSqrt = std::sqrt(double(cur->visits));
+            const bool pruneOK = cfg_.bound_prune && cur->visits > 0 && cur->bound > -1e29;
             for(size_t i=0;i<cur->children.size();++i){
-                if(cur->children[i]->is_proven_win) continue; // opponent wins there
+                const auto& ch = cur->children[i];
+                if(ch->is_proven_win) continue; // opponent wins there
+                // Alpha-beta flavored fail-low prune: if this child's best
+                // confirmed value (negated to parent view) still trails the
+                // node's confirmed best by margin after enough visits, it
+                // cannot become the selection — drop it from UCB contention.
+                if(pruneOK && ch->visits >= cfg_.bound_prune_min_visits
+                   && (-ch->bound) + cfg_.bound_prune_margin < cur->bound)
+                    continue;
                 double s = ucb_score(cur, cur->children[i].get(), cur->visits, parentLog, parentSqrt);
                 if(s > bestScore){ bestScore=s; bestIdx=(int)i; }
             }
@@ -387,6 +396,16 @@ void MarrowTree::backup(std::vector<MarrowNode*>& path, Value leafValue){
         MarrowNode* n = path[i];
         n->visits++;
         n->total_value += double(cur);
+        // Alpha-beta bound propagation (negamax, node perspective): a node's
+        // bound is the max over children of -child.bound. We fold the child
+        // on the path (path[i+1]) since that's the one just updated.
+        if(i+1 < (int)path.size()){
+            double cand = -path[i+1]->bound;
+            if(cand > n->bound) n->bound = cand;
+        } else {
+            // leaf: bound is the leaf's own value from its perspective
+            if(double(cur) > n->bound) n->bound = double(cur);
+        }
         // AND/OR proof recompute (node-relative, exact):
         //   WIN  if ANY child is proven LOSS (opponent mated) — min distance;
         //   LOSS if ALL children proven WIN (opponent wins all) — max distance.

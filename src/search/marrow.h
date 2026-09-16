@@ -36,6 +36,9 @@ struct MarrowNode {
     bool is_proven_loss=false;
     int proven_depth=1000000;    // plies from this node to the proven end (min for wins)
     Value terminal_value=0;
+    // Alpha-beta bound (negamax, node perspective): best confirmed value via
+    // -child.bound propagation. Used by the optional bound pruner in selection.
+    double bound=-1e30;
     std::vector<std::unique_ptr<MarrowNode>> children;
 
     double q() const { return visits ? total_value / visits : 0.0; }
@@ -57,6 +60,13 @@ struct MarrowConfig {
     double policy_blend = 0.0;   // 0 = handcrafted only; 0.7 typical with v3 net
     double dirichlet_eps = 0.0;  // root noise mix (self-play/training only)
     double dirichlet_alpha = 0.3;// noise concentration
+    // Bounds-based alpha-beta flavored pruning (own design, no SF code):
+    // fail-low prune — a child whose negamax bound can no longer beat the
+    // node's best confirmed value is cut after enough visits (default OFF;
+    // ON proved safe via A/B before shipping).
+    bool bound_prune = false;
+    int bound_prune_min_visits = 6;  // give a child at least this many visits
+    int bound_prune_margin = 40;     // cp slack so pruning stays sound-ish
 };
 
 class MarrowTree {
@@ -124,6 +134,7 @@ private:
     Position evalScratch_;
     std::vector<MarrowNode*> pathBuf_;
     std::vector<Move> expMoves_;
+private:
 
     // one iteration: select -> expand/evaluate -> backup
     // returns leaf value from leaf player's perspective
