@@ -36,9 +36,14 @@ struct MarrowNode {
     bool is_proven_loss=false;
     int proven_depth=1000000;    // plies from this node to the proven end (min for wins)
     Value terminal_value=0;
-    // Alpha-beta bound (negamax, node perspective): best confirmed value via
-    // -child.bound propagation. Used by the optional bound pruner in selection.
+    // Negamax best-confirmed bound (node perspective): max over children of
+    // -child.bound. hasBound=false until the first leaf eval back-propagates.
+    // When cfg.best_first is on, backup/selection use THIS (not the visit
+    // average) so the tree behaves like best-first minimax: visits collapse
+    // onto the frontier that can still improve, giving depth instead of
+    // breadth-wide sampling on a 450-visit budget.
     double bound=-1e30;
+    bool hasBound=false;
     std::vector<std::unique_ptr<MarrowNode>> children;
 
     double q() const { return visits ? total_value / visits : 0.0; }
@@ -67,6 +72,13 @@ struct MarrowConfig {
     bool bound_prune = false;
     int bound_prune_min_visits = 6;  // give a child at least this many visits
     int bound_prune_margin = 40;     // cp slack so pruning stays sound-ish
+    // Best-first minimax backup: recompute node bound as exact max(-child.bound)
+    // along the path. Sound (bound can decrease when a child improves) and used
+    // by the optional bound pruner. SELECTING by the bound is NOT used — it is
+    // an optimistic overestimate on partially-explored nodes (produced phantom
+    // mates). Selection stays on visit-average UCB.
+    bool best_first = false;     // kept for A/B; selection by bound proved wrong
+    int best_first_min_visits = 3;   // trust a child's bound after this many visits
 };
 
 class MarrowTree {

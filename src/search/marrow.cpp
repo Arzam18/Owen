@@ -52,7 +52,16 @@ double MarrowTree::ucb_score(const MarrowNode* parent, const MarrowNode* child, 
         // moves like Nf3/Nc3 are tried before h4/f3 within the same depth.
         return 5e8 - child->depth*1e6 + child->prior * 1e5;
     }
-    double q = child->q();
+    // Best-first value: in minimax sense, the child is worth its best
+    // confirmed negamax bound (negated to parent view). Once a child can no
+    // longer improve the parent's confirmed best, exploration alone decides
+    // whether it ever gets another visit — so visits concentrate on the
+    // frontier that still raises the root value = depth, not breadth.
+    double q;
+    if(cfg_.best_first && child->hasBound && child->visits >= cfg_.best_first_min_visits)
+        q = child->bound;
+    else
+        q = child->q();
     double q_parent = -q;
     // depth-decayed exploration: slower decay past classical_depth for long-depth search
     double C_eff = cEff_[child->depth < kMaxDepth ? child->depth : kMaxDepth - 1];
@@ -396,15 +405,20 @@ void MarrowTree::backup(std::vector<MarrowNode*>& path, Value leafValue){
         MarrowNode* n = path[i];
         n->visits++;
         n->total_value += double(cur);
-        // Alpha-beta bound propagation (negamax, node perspective): a node's
-        // bound is the max over children of -child.bound. We fold the child
-        // on the path (path[i+1]) since that's the one just updated.
-        if(i+1 < (int)path.size()){
-            double cand = -path[i+1]->bound;
-            if(cand > n->bound) n->bound = cand;
+        // Best-confirmed negamax bound: node bound = max over children with a
+        // reliable bound of (-child.bound), in the node's own perspective. This
+        // is recomputed along the path (not incrementally) because it can
+        // DECREASE when a child's bound rises — an exact max is what turns the
+        // tree into genuine best-first minimax backing.
+        if(!n->children.empty()){
+            double nb = -1e30; bool any=false;
+            for(auto& ch : n->children){
+                if(ch->hasBound){ any=true; double v=-ch->bound; if(v>nb) nb=v; }
+            }
+            if(any){ n->bound = nb; n->hasBound = true; }
         } else {
-            // leaf: bound is the leaf's own value from its perspective
-            if(double(cur) > n->bound) n->bound = double(cur);
+            // leaf/terminal: bound is the value just evaluated, node's view.
+            n->bound = double(cur); n->hasBound = true;
         }
         // AND/OR proof recompute (node-relative, exact):
         //   WIN  if ANY child is proven LOSS (opponent mated) — min distance;
@@ -480,8 +494,12 @@ Move MarrowTree::search_until(const std::function<bool()>& stop,
             lastInfoVisits = totalVisits_;
             MarrowNode* best=nullptr; int bestV=-1;
             for(auto &c: root_->children) if(c->visits > bestV){ bestV=c->visits; best=c.get(); }
-            // Root-relative score: child's mean is opponent-relative, negate.
-            if(best) on_info(totalVisits_, Value(-best->q()), best->move);
+            // Report the visit-based average (converges to true value),
+            // NOT the bound (optimistic upper bound during partial exploration).
+            if(best){
+                Value score = Value(-best->q());
+                on_info(totalVisits_, score, best->move);
+            }
         }
     }
     MarrowNode* best=nullptr;
@@ -503,7 +521,10 @@ Move MarrowTree::search_until(const std::function<bool()>& stop,
         if(c->visits > best->visits || (c->visits==best->visits && c->q() > best->q()))
             best=c.get();
     }
-    if(best) tt_.store(rootPos_.key(), Value(best->q()), maxDepth_, 0, best->move);
+    if(best){
+        Value score = Value(int(best->q()));
+        tt_.store(rootPos_.key(), score, maxDepth_, 0, best->move);
+    }
     return best? best->move : 0;
 }
 

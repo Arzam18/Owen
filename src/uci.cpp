@@ -102,6 +102,7 @@ static const std::vector<Opt> kOpts = {
     {"Clear Hash",     OptType::Button, ""},
     {"MTS_C",          OptType::String, "1.35"},
     {"Bound Prune",    OptType::Check,  "false"},
+    {"Best First",     OptType::Check,  "false"},
     // Limiter + real ceiling — honest cap, never fakes strength above what search+NN can deliver.
     {"UCI_Elo",        OptType::Spin,   "1320", 1320, 4100},
     {"UCI_LimitStrength", OptType::Check, "false"},
@@ -184,6 +185,8 @@ static void apply_setoption(const std::string& line){
         catch(...){ log_info("MTS_C needs numeric value"); }
     } else if(lname=="bound prune"){
         g_searcher.set_bound_prune(ieq(value,"true") || value=="1");
+    } else if(lname=="best first"){
+        g_searcher.set_best_first(ieq(value,"true") || value=="1");
     } else if(lname=="mts_multipv"){
         int iv; if(!parse_int_strict(value, iv)){ log_info("MTS_MultiPV needs integer value"); return; }
         iv = clampSpin(iv, 1, 500);
