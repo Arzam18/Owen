@@ -65,7 +65,7 @@ jobs:
 
       - name: build
         run: |
-          cmake --build build --target owen2 -j2
+          cmake --build build --target owen2 -j2 --config Release
 
       - name: package (unix)
         if: runner.os != 'Windows'
@@ -77,7 +77,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           mkdir dist
-          copy build\owen2.exe "dist\owen2-${{ matrix.tag }}.exe"
+          copy "build\Release\owen2.exe" "dist\owen2-${{ matrix.tag }}.exe"
 
       - name: upload artifact
         uses: actions/upload-artifact@v4
