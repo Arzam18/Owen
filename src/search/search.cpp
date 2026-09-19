@@ -369,7 +369,7 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
             }
             auto t1 = clock::now();
             int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1-t0).count();
-            return SearchResult{best, ponder, bestScore, 1, totalNodes, ms};
+            return SearchResult{best, ponder, bestScore, res[bi].depth, totalNodes, ms};
         }
     }
     // Enforce searchmoves at the end if needed (cheap & correct)
@@ -420,7 +420,7 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
                       (long long)tree.ec_hits(), (long long)tree.ec_misses());
         info_cb(dbgbuf);
     }
-    return SearchResult{best, ponder, sc, 1, (uint64_t)tree.total_visits(), ms};
+    return SearchResult{best, ponder, sc, tree.max_depth(), (uint64_t)tree.total_visits(), ms};
 }
 
 } // namespace owen2::search
