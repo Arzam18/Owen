@@ -81,7 +81,12 @@ def play_game(white_spec, black_spec, fen, movetime, nodes, resign_cp, resign_pl
             turn = "w" if board.turn == chess.WHITE else "b"
             eng = engines[turn]
             try:
-                res = eng.play(board, chess.engine.Limit(time=movetime, nodes=nodes),
+                limit = {}
+                if movetime > 0:
+                    limit["time"] = movetime
+                if nodes > 0:
+                    limit["nodes"] = nodes
+                res = eng.play(board, chess.engine.Limit(**limit),
                                info=chess.engine.INFO_SCORE)
             except Exception as e:
                 print(f"  engine {turn} error: {e}")

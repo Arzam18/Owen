@@ -1,5 +1,7 @@
 build/
 build-baked/
+build-openbench/
+dist/
 __pycache__/
 *.o2nn
 !nets/.gitkeep

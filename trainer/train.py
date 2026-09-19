@@ -182,14 +182,9 @@ class SDataDataset(Dataset):
         self.path=path
         self.max_active=max_active
         sz = os.path.getsize(path)
-        # v3 (73B) adds the played move (policy label); v2 (71B) has
-        # castling+ep trailer; v1 legacy is 69B.
-        if sz % RECORD_SIZE_V3 == 0 and sz > 0:
-            self.rs = RECORD_SIZE_V3
-        elif sz % RECORD_SIZE_V2 == 0 and sz % RECORD_SIZE_V1 != 0:
-            self.rs = RECORD_SIZE_V2
-        else:
-            self.rs = RECORD_SIZE_V1
+        # Use content-validating detector (a size may be divisible by several record sizes).
+        from sdata import detect_record_size as _detect
+        self.rs = _detect(path)
         self.n = sz // self.rs
         print(f"Dataset v2 mmap: {self.n} positions from {path} (H={H} threat, record {self.rs}B)")
         # mmap as raw bytes for zero-copy access

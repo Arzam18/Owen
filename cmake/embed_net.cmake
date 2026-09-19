@@ -1,4 +1,4 @@
-# Embed .o2nn into binary as hex array (like Stockfish)
+# Embed .o2nn into the binary as a hex array so it runs standalone
 # Usage: include(embed_net.cmake) then embed_net(nets/o2-final.o2nn)
 function(embed_net net_path)
   get_filename_component(net_abs "${net_path}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")

@@ -5,9 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(OWEN_NATIVE "Build with -march=native" ON)
+option(OWEN_NATIVE "Build with -march=native" OFF)
 option(OWEN_AVX2   "Enable AVX2 for NNUE" OFF)
-option(OWEN_EMBED_NET "Bake .o2nn into binary (like Stockfish)" OFF)
+option(OWEN_EMBED_NET "Bake .o2nn into the binary so it runs standalone" OFF)
 set(OWEN_EMBED_NET_PATH "nets/o2-final.o2nn" CACHE STRING "Path to net to embed")
 
 add_compile_options(-Wall -Wextra -Wpedantic)
@@ -19,7 +19,7 @@ if(OWEN_AVX2)
   add_compile_definitions(OWEN_AVX2)
 endif()
 
-# ── core library (everything except main) ──────────────────────────
+# ├─ core library (everything except main) ──────────────────────────
 file(GLOB CORE_SRC
   src/bitboard.cpp
   src/position.cpp
@@ -35,10 +35,13 @@ file(GLOB CORE_SRC
 )
 add_library(owen2_core STATIC ${CORE_SRC})
 target_include_directories(owen2_core PUBLIC src)
-target_link_libraries(owen2_core PUBLIC pthread)
+# portable threading: Threads::Threads maps to pthread on Unix, handles
+# Windows Win32 threads automatically (no explicit -lpthread needed).
+find_package(Threads REQUIRED)
+target_link_libraries(owen2_core PUBLIC Threads::Threads)
 
 # ── main engine ───────────────────────────────────────────────────
-# ── bake net into engine when requested (like Stockfish) ──────
+# ── bake net into the engine when requested ──────
 if(OWEN_EMBED_NET)
   include(cmake/embed_net.cmake)
   add_executable(owen2 src/main.cpp)

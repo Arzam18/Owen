@@ -35,12 +35,27 @@ def policy_index(move16):
     return fr * 64 + to
 
 def detect_record_size(path):
+    """Pick the record size whose records are content-valid. Size-based detection
+    is ambiguous when a size is divisible by several of {69,71,73}."""
     sz = os.path.getsize(path)
-    # Prefer newest version whose size divides evenly (v3 -> v2 -> v1).
-    if sz > 0 and sz % RECORD_SIZE_V3 == 0:
-        return RECORD_SIZE_V3
-    if sz > 0 and sz % RECORD_SIZE_V2 == 0 and sz % RECORD_SIZE_V1 != 0:
-        return RECORD_SIZE_V2
+    def valid(R):
+        if not sz or sz % R != 0:
+            return False
+        n = min(sz // R, 2000)
+        bad = 0
+        with open(path, "rb") as f:
+            for _ in range(n):
+                rec = f.read(R)
+                if len(rec) < R:
+                    break
+                if not all(0 <= b <= 12 for b in rec[0:64]) or rec[64] not in (0, 1):
+                    bad += 1
+                    if bad > n // 20:
+                        return False
+        return bad <= n // 20
+    for R in (RECORD_SIZE_V3, RECORD_SIZE_V2, RECORD_SIZE_V1):
+        if valid(R):
+            return R
     return RECORD_SIZE_V1
 
 def unpack_record(b):

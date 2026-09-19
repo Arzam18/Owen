@@ -414,6 +414,12 @@ SearchResult Searcher::search(const SearchLimits& lim, std::atomic<bool>& stop,
     if(root){
         for(auto &c: root->children) if(c->move==best){ sc=Value(-c->q()); break; }
     }
+    if(info_cb){
+        char dbgbuf[128];
+        std::snprintf(dbgbuf, sizeof(dbgbuf), "info string ec h=%lld m=%lld",
+                      (long long)tree.ec_hits(), (long long)tree.ec_misses());
+        info_cb(dbgbuf);
+    }
     return SearchResult{best, ponder, sc, 1, (uint64_t)tree.total_visits(), ms};
 }
 

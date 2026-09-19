@@ -102,6 +102,8 @@ public:
     int total_visits() const { return totalVisits_; }
     int max_depth() const { return maxDepth_; }
     MarrowNode* root() { return root_.get(); }
+    long long ec_hits() const { return ecHits_; }
+    long long ec_misses() const { return ecMisses_; }
 
 private:
     Position rootPos_;
@@ -111,6 +113,7 @@ private:
     std::unique_ptr<MarrowNode> root_;
     int totalVisits_=0;
     int maxDepth_=0;
+    long long ecHits_=0, ecMisses_=0;
     // Precomputed depth→C_eff table: kills pow() from ucb_score.
     static constexpr int kMaxDepth = 256;
     double cEff_[kMaxDepth]{};

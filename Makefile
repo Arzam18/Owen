@@ -11,7 +11,7 @@ BUILD_DIR ?= build-openbench
 NPROC     ?= $(shell nproc 2>/dev/null || echo 4)
 
 EMBED_SRC  = $(BUILD_DIR)/embedded_net.cpp
-CMAKE_DEFS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=$(CXX)
+CMAKE_DEFS = -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=$(CXX) $(CMAKE_EXTRA)
 
 all: $(EXE)
 

@@ -371,7 +371,8 @@ Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
 
 int MarrowTree::eval_cached(const Position& pos) {
     int v = 0;
-    if (evalCache_.probe(pos.key(), v)) return v;
+    if (evalCache_.probe(pos.key(), v)) { ecHits_++; return v; }
+    ecMisses_++;
     v = nnue::g_network.evaluate(pos);
     evalCache_.store(pos.key(), v);
     return v;

@@ -15,21 +15,45 @@ import argparse, os, struct, subprocess, threading, queue, time
 
 RECORD_SIZE_V1 = 69
 RECORD_SIZE_V2 = 71
+RECORD_SIZE_V3 = 73
 RECORD_SIZE = 69
 SF_DEFAULT = os.path.expanduser("~/Videos/stockfish/stockfish-ubuntu-x86-64-avx2")
 
 def detect_record_size(path):
+    """Pick the record size whose records are content-valid (board bytes 0..12,
+    stm in {0,1}). Purely size-based detection is ambiguous when a file size is
+    divisible by several of {69,71,73} (69*73 has many common multiples)."""
     sz = os.path.getsize(path)
-    if sz % RECORD_SIZE_V2 == 0 and sz % RECORD_SIZE_V1 != 0:
-        return RECORD_SIZE_V2
+    import struct as _s
+    def valid(R):
+        if not sz or sz % R != 0:
+            return False
+        n = min(sz // R, 2000)
+        bad = 0
+        with open(path, "rb") as f:
+            for _ in range(n):
+                rec = f.read(R)
+                if len(rec) < R:
+                    break
+                if not all(0 <= b <= 12 for b in rec[0:64]) or rec[64] not in (0, 1):
+                    bad += 1
+                    if bad > n // 20:
+                        return False
+        return bad <= n // 20
+    for R in (RECORD_SIZE_V3, RECORD_SIZE_V2, RECORD_SIZE_V1):
+        if valid(R):
+            return R
     return RECORD_SIZE_V1
 
 def unpack_distill_record(b):
-    """Return (board_bytes, stm, ply, castling, ep). Handles v1 (69B) and v2 (71B)."""
+    """Return (board_bytes, stm, ply, castling, ep). Handles v1 (69B), v2 (71B), v3 (73B)."""
     board = b[0:64]
     stm = b[64]
     ply = b[68]
-    if len(b) >= 71:
+    if len(b) >= 73:
+        castling = b[69]
+        ep = b[70]
+    elif len(b) >= 71:
         castling = b[69]
         ep = b[70]
     else:
@@ -184,89 +208,104 @@ def distill(args):
     out=args.out
     rs = detect_record_size(sdata)
     n=os.path.getsize(sdata)//rs
-    print(f"Distill: {n} positions from {sdata} (record {rs}B {'v2' if rs==71 else 'v1-legacy'}) via {args.stockfish} depth {args.depth} threads {args.threads}")
+    tag = "v3" if rs==73 else ("v2" if rs==71 else "v1-legacy")
+    print(f"Distill: {n} positions from {sdata} (record {rs}B {tag}) via {args.stockfish} depth {args.depth} threads {args.threads}", flush=True)
 
     out_exists=False
     already=0
     if os.path.exists(out):
         already=os.path.getsize(out)//rs
         if 0 < already < n:
-            print(f" Resume: {already}/{n} already in {out} — will append rest")
+            print(f" Resume: {already}/{n} already in {out} — will append rest", flush=True)
             out_exists=True
 
-    # Load needed records — stream if resuming: skip already-done prefix
     if out_exists:
         skip=already
     else:
         skip=0
-    records=[]
-    for i, b in enumerate(iter_records(sdata)):
-        if i < skip: continue
-        records.append(b)
-    print(f" To process: {len(records)} records (skipped {skip})")
-    if not records and out_exists:
+    to_do=n-skip
+    print(f" To process: {to_do} records (skipped {skip})", flush=True)
+    if to_do <= 0:
         print("Already complete.")
         return
 
     # Start workers
     workers=[SFWorker(args.stockfish, args.depth, hash_mb=args.hash) for _ in range(args.threads)]
-    print(f" Started {len(workers)} SF18 workers")
+    print(f" Started {len(workers)} SF workers", flush=True)
 
-    out_records=[None]*len(records)
-
-    def eval_one(i):
-        b=records[i]
+    def eval_one(args_tuple):
+        idx, b = args_tuple
         board, stm, ply, castling, ep = unpack_distill_record(b)
         import numpy as np
         brd=np.frombuffer(board, dtype=np.uint8)
         fen=board_to_fen(brd, stm, ply, castling, ep)
-        w = workers[i % len(workers)]
+        w = workers[idx % len(workers)]
         cp=w.eval_fen(fen)
         new = bytearray(b)
         struct.pack_into("<h", new, 65, int(cp))
-        return i, bytes(new)
+        return idx, bytes(new)
 
-    done=0; start=time.time()
-    failed=[]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as ex:
-        futs={ex.submit(eval_one,i):i for i in range(len(records))}
-        for fut in concurrent.futures.as_completed(futs):
+    done_checkpoint=0; start=time.time(); failed=[]
+    if out_exists:
+        mode="ab"
+    else:
+        mode="wb"
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    # need os.stat-based counting after resume? use n-skip as total
+    need_write = to_do
+
+    # Streaming: keep only a bounded window of in-flight futures so memory
+    # stays flat regardless of dataset size. Results are written in order.
+    window = max(args.threads * 4, 64)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as ex, \
+         open(out, mode) as f:
+        it = iter_records(sdata)
+        for _ in range(skip):
+            next(it, None)
+        in_flight = {}   # fut -> (idx, b)
+        pending = {}     # idx -> bytes  (completed but out of order, keyed for ordered write)
+        next_in = skip   # next index to submit
+        next_out = skip  # next index to write
+
+        def submit_more():
+            nonlocal next_in
+            while len(in_flight) < window and next_in < n:
+                b = next(it, None)
+                if b is None:
+                    next_in = n
+                    break
+                f_ = ex.submit(eval_one, (next_in, b))
+                in_flight[f_] = (next_in, b)
+                next_in += 1
+
+        submit_more()
+        written = 0
+        while in_flight:
+            fut = next(concurrent.futures.as_completed(in_flight))
+            idx, b = in_flight[fut]
             try:
-                i, nb = fut.result()
+                _idx, nb = fut.result()
+                pending[_idx] = nb
             except Exception as e:
-                idx=futs[fut]
-                print(f" WARN eval {skip+idx} failed: {e}", flush=True)
-                failed.append((skip+idx, str(e)))
-                # write a neutral record so length stays correct
-                b=records[idx]
-                new=bytearray(b); struct.pack_into("<h", new, 65, 0)
-                out_records[idx]=bytes(new)
-                done+=1
-                continue
-            out_records[i]=nb
-            done+=1
-            if done % 500 == 0 or done==len(records):
-                elapsed=time.time()-start
-                rate=done/elapsed if elapsed>0 else 0
-                eta=(len(records)-done)/rate if rate>0 else 0
-                print(f" [{skip+done}/{n}] {rate:.1f} pos/s  eta {eta/60:.1f}m  failed {len(failed)}", flush=True)
-                # checkpoint every 20k
-                if done % 20000 == 0:
-                    mode="ab" if out_exists or done>20000 else "wb"
-                    if done==20000 and not out_exists:
-                        mode="wb"
-                    else:
-                        mode="ab" if os.path.exists(out) and already>0 else ("ab" if done>20000 else "wb")
-                    # we checkpoint differently: on first flush write all so far, then append
-                    pass
+                print(f" WARN eval {idx} failed: {e}", flush=True)
+                failed.append(idx)
+                nb = bytearray(b); struct.pack_into("<h", nb, 65, 0)
+                pending[idx] = bytes(nb)
+            del in_flight[fut]
+            # drain ordered results to file
+            while next_out in pending:
+                f.write(pending.pop(next_out))
+                next_out += 1
+                written += 1
+                done=written
+                if done % 500 == 0 or done==(n-skip):
+                    elapsed=time.time()-start
+                    rate=done/elapsed if elapsed>0 else 0
+                    eta=(need_write-done)/rate if rate>0 else 0
+                    print(f" [{skip+done}/{n}] {rate:.1f} pos/s  eta {eta/60:.1f}m  failed {len(failed)}", flush=True)
+            submit_more()
 
     for w in workers: w.quit()
-
-    mode="ab" if out_exists else "wb"
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out,mode) as f:
-        for r in out_records:
-            f.write(r if r is not None else records[len(failed)]*0)
     sz=os.path.getsize(out)
     print(f"Done -> {out}  {sz} bytes  {sz//rs} positions  failed {len(failed)}")
     if failed:
