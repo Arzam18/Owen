@@ -5,7 +5,7 @@ on:
     inputs:
       net_url:
         description: "URL of the .o2nn net to bake into the binaries"
-        default: "https://github.com/Owen-Foundation/Owen/releases/download/v0.2.0/owen2-v14.o2nn"
+        default: "https://github.com/Owen-Foundation/Owen/releases/download/v2.1.0/owen2-v14.o2nn"
         required: false
   push:
     branches: [main]
