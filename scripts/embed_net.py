@@ -25,23 +25,29 @@ with open(hdr, 'w') as h:
 if target == "MACHO":
     # Apple assembler: no .pushsection/.popsection and .globl (not .global);
     # switch the section once (this TU holds nothing else to restore).
+    # Mach-O C symbols carry a leading underscore, which hand-written asm
+    # must spell out explicitly.
     section_enter = '".section __DATA,__const\\n"'
     section_exit = None
     globl = ".globl"
+    sym = "_g_embedded_net"
+    sym_end = "_g_embedded_net_end"
 else:  # ELF (Linux/GCC/Clang)
     section_enter = '".pushsection .rodata\\n"\n".balign 8\\n"'
     section_exit = '".popsection\\n"'
     globl = ".global"
+    sym = "g_embedded_net"
+    sym_end = "g_embedded_net_end"
 
 with open(gen, 'w') as g:
     g.write('#include "embedded_net.h"\n')
     g.write('__asm__(\n')
     g.write(f'{section_enter}\n')
-    g.write(f'"{globl} g_embedded_net\\n"\n')
-    g.write('"g_embedded_net:\\n"\n')
+    g.write(f'"{globl} {sym}\\n"\n')
+    g.write(f'"{sym}:\\n"\n')
     g.write(f'".incbin \\"{net}\\"\\n"\n')
-    g.write(f'"{globl} g_embedded_net_end\\n"\n')
-    g.write('"g_embedded_net_end:\\n"\n')
+    g.write(f'"{globl} {sym_end}\\n"\n')
+    g.write(f'"{sym_end}:\\n"\n')
     if section_exit is not None:
         g.write(f'{section_exit}\n')
     g.write(');\n')

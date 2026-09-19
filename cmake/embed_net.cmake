@@ -12,9 +12,11 @@ function(embed_net net_path)
   endif()
 
   if(MSVC)
-    file(TO_NATIVE_PATH "${net_abs}" net_native)
+    # NOTE: keep forward slashes — rc.exe processes backslash escapes, so a
+    # native D:\... path would corrupt (\n -> newline). Quoted forward-slash
+    # paths work fine.
     set(rc "${CMAKE_BINARY_DIR}/baked_net.rc")
-    file(WRITE "${rc}" "1 RCDATA \"${net_native}\"\n")
+    file(WRITE "${rc}" "1 RCDATA \"${net_abs}\"\n")
     target_sources(owen2 PRIVATE "${rc}")
     target_compile_definitions(owen2 PRIVATE OWEN_EMBED_NET OWEN_EMBED_WINRC)
     message(STATUS "Embedding ${net_path} into binary via Win32 resource")
