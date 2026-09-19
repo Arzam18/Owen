@@ -185,7 +185,7 @@ html[data-theme="light"] .i-moon { display: none; }
 .link-arrow:hover { text-decoration: underline; }
 
 /* ---------- Download ---------- */
-.download-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 28px; }
+.download-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 18px; margin-bottom: 28px; }
 .dl-card {
   display: flex; flex-direction: column; gap: 4px; padding: 24px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
