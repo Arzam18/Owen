@@ -1,0 +1,48 @@
+name: Build Owen Engine (Android ARM64)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android ARM64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Android NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
+
+      - name: Download NNUE Net File
+        run: |
+          mkdir -p nets
+          # Replace the URL below with your actual .o2nn download link
+          curl -L -o nets/o2-final.o2nn "https://github.com/Arzam18/Owen/releases/download/v0.1.0/o2-final.o2nn"
+
+      - name: Configure CMake (Android ARM64 with Embedded Net)
+        run: |
+          cmake -B build-android \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOWEN_EMBED_NET=ON \
+            -DOWEN_EMBED_NET_PATH="nets/o2-final.o2nn"
+
+      - name: Build Android Binary
+        run: cmake --build build-android -j$(nproc)
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: owen2-android-arm64
+          path: build-android/owen2
