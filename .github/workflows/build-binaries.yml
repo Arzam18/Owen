@@ -28,8 +28,8 @@ jobs:
             os: macos-14
             tag: darwin-arm64
             cmake: -DOWEN_NATIVE=OFF
-          - name: darwin-x86_64
-            os: macos-13
+          - name: darwin-x86_64 (Intel Macs)
+            os: macos-15-intel
             tag: darwin-x86_64
             cmake: -DOWEN_NATIVE=OFF
           - name: windows-x86_64
