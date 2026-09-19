@@ -5,6 +5,7 @@
 #include <chrono>
 #include <atomic>
 #include <functional>
+#include <algorithm>
 
 namespace owen2::search {
 

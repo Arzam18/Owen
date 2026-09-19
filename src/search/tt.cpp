@@ -1,5 +1,6 @@
 #include "tt.h"
 #include <cstring>
+#include <algorithm>
 
 namespace owen2 {
 

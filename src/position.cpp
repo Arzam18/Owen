@@ -1,5 +1,6 @@
 #include "position.h"
 #include <sstream>
+#include <algorithm>
 #include <random>
 #include <cctype>
 #include <cassert>
