@@ -13,3 +13,11 @@ data/
 .DS_Store
 gui/target/
 gui/Cargo.lock
+
+# android engine-APK build outputs
+android/build/
+android/jniLibs/
+android/gen/
+android/classes/
+android/out/
+android/stage/
