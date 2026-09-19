@@ -28,7 +28,7 @@
         <a href="#features">Features</a>
         <a href="#download">Download</a>
         <a href="#testing">Testing</a>
-        <a href="#docs">Docs</a>
+        <a href="docs/">Docs</a>
         <a href="#community">Community</a>
       </nav>
       <div class="header-actions">
@@ -248,9 +248,11 @@ cmake --build build -j
             <span>Run a worker</span>
             <button class="copy" type="button" data-copy="python worker.py USERNAME PASSWORD --host zoloft-roland-playstation-motorcycles.trycloudflare.com --port 443">Copy</button>
           </div>
-          <pre><code><span class="c"># one command, no GPU needed (https on port 443)</span>
+          <pre><code><span class="c"># 1. create an account (auto-approved): open the test server above, /signup</span>
+<span class="c"># 2. get the worker: git clone https://github.com/Owen-Foundation/DefenceTest</span>
+<span class="c"># 3. run it with YOUR account + the full --host (no GPU needed, https/443)</span>
 python worker.py USERNAME PASSWORD --host zoloft-roland-playstation-motorcycles.trycloudflare.com --port 443
-<span class="c"># first run asks for a username / password</span></code></pre>
+<span class="c"># needs: python3.8+, C++ compiler, make, cmake. Omit --host only for a local server.</span></code></pre>
           <p class="note">
             Games are played by your worker and submitted automatically; the server aggregates
             W/D/L, Elo and SPRT statistics for every patch.
@@ -264,12 +266,13 @@ python worker.py USERNAME PASSWORD --host zoloft-roland-playstation-motorcycles.
         <header class="section-head">
           <p class="eyebrow">Documentation</p>
           <h2>Everything in the open</h2>
+          <p class="section-sub">Full guides on this site, plus the repo for source-level docs.</p>
         </header>
         <div class="grid docs-grid">
-          <a class="doc" href="https://github.com/Owen-Foundation/Owen/blob/master/README.md" target="_blank" rel="noopener"><h3>Getting started</h3><p>Build, run and configure Owen 2.</p></a>
-          <a class="doc" href="https://github.com/Owen-Foundation/Owen/blob/master/docs/mts.md" target="_blank" rel="noopener"><h3>Marrow Tree Search</h3><p>The full search specification.</p></a>
-          <a class="doc" href="https://github.com/Owen-Foundation/Owen/tree/master/trainer" target="_blank" rel="noopener"><h3>Trainer</h3><p>Data format and training pipeline.</p></a>
-          <a class="doc" href="https://github.com/Owen-Foundation/Owen/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener"><h3>Contributing</h3><p>Tests, style and PRs.</p></a>
+          <a class="doc" href="docs/how-it-works.html"><h3>How it works</h3><p>Board, moves, NNUE and Marrow Tree Search.</p></a>
+          <a class="doc" href="docs/uci.html"><h3>UCI reference</h3><p>Commands, options and output lines.</p></a>
+          <a class="doc" href="docs/api.html"><h3>Worker API</h3><p>Interactive Scalar reference for the test API.</p></a>
+          <a class="doc" href="docs/"><h3>All docs →</h3><p>Nets, training, types and the full index.</p></a>
         </div>
       </div>
     </section>
