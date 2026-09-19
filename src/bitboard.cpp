@@ -72,7 +72,7 @@ Bitboard set_occ(int index, Bitboard mask){
     Bitboard occ = 0;
     int b = 0;
     while(mask){
-        int j = __builtin_ctzll(mask);
+        int j = std::countr_zero(mask);
         mask &= mask - 1;
         if(index & (1 << b)) occ |= (1ULL << j);
         ++b;

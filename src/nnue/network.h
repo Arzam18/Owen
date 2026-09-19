@@ -7,7 +7,7 @@
 
 namespace owen2::nnue {
 
-// Owen2 v2/v3 — SFNNv10-class .o2nn
+// Owen2 v2/v3 — .o2nn format
 // magic "O2NN" ver=2, H=1024 (value only) or ver=3 (+policy head)
 // Layout: feature_weights [INPUT_SIZE*H] int16
 //         feature_bias    [H] int16
@@ -18,7 +18,7 @@ namespace owen2::nnue {
 
 struct Network {
     static constexpr int H = HIDDEN_SIZE; // 1024
-    static constexpr int L1 = 16, L2 = 32; // 1024->16->32->1 : SFNNv10 style bottleneck, faster on AVX2
+    static constexpr int L1 = 16, L2 = 32; // 1024->16->32->1 bottleneck with int8 weights, fast on AVX2
     static constexpr int NPOL = 4352; // 4096 from-to + 256 promo ((promo-1)*64+to)
     std::vector<int16_t> feature_weights; // INPUT*H
     std::array<int16_t, H> feature_bias{};

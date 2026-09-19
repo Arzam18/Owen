@@ -1,27 +1,46 @@
 #!/usr/bin/env python3
-"""Embed a net file into the binary WITHOUT C++ parsing (OOM-safe for 100MB+ nets).
-Emits a tiny TU using the assembler's .incbin (Linux/GAS). Same symbols as before:
-  g_embedded_net (bytes), g_embedded_net_size (size_t).
+"""Embed a net file into the binary WITHOUT C++ parsing (fast for 100MB+ nets).
+
+Emits a tiny translation unit using the assembler's .incbin directive, so the
+168MB net never passes through the C++ parser. Same symbols on all targets:
+  g_embedded_net (bytes), g_embedded_net_end (one past the end).
+
+Usage: embed_net.py <net> <gen.cpp> <gen.h> <ELF|MACHO>
+
+Windows/MSVC cannot use inline asm; it embeds via a .rc RCDATA resource
+instead (see cmake/embed_net.cmake) and loads it with FindResource.
 """
 import sys
-net, gen, hdr = sys.argv[1:4]
+
+net, gen, hdr, target = sys.argv[1:5]
 with open(net, 'rb') as f:
     size = len(f.read())
+
 with open(hdr, 'w') as h:
     h.write("#pragma once\n#include <cstddef>\n#include <cstdint>\n")
     h.write("extern const unsigned char g_embedded_net[];\n")
     h.write("extern const unsigned char g_embedded_net_end[];\n")
-    h.write(f"// {size} bytes from {net} (via .incbin, Linux/GAS only)\n")
+    h.write(f"// {size} bytes from {net} (via .incbin)\n")
+
+if target == "MACHO":
+    # Apple assembler: no .pushsection/.popsection; switch the section once
+    # (this TU holds nothing else, so there is nothing to restore).
+    section_enter = '".section __DATA,__const\\n"'
+    section_exit = None
+else:  # ELF (Linux/GCC/Clang)
+    section_enter = '".pushsection .rodata\\n"\n".balign 8\\n"'
+    section_exit = '".popsection\\n"'
+
 with open(gen, 'w') as g:
     g.write('#include "embedded_net.h"\n')
     g.write('__asm__(\n')
-    g.write('".pushsection .rodata\\n"\n')
-    g.write('".balign 8\\n"\n')
+    g.write(f'{section_enter}\n')
     g.write('".global g_embedded_net\\n"\n')
     g.write('"g_embedded_net:\\n"\n')
     g.write(f'".incbin \\"{net}\\"\\n"\n')
     g.write('".global g_embedded_net_end\\n"\n')
     g.write('"g_embedded_net_end:\\n"\n')
-    g.write('".popsection\\n"\n')
+    if section_exit is not None:
+        g.write(f'{section_exit}\n')
     g.write(');\n')
-print(f"Embedded {size} bytes -> {gen} (.incbin)")
+print(f"Embedded {size} bytes -> {gen} (.incbin, {target})")

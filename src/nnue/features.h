@@ -4,13 +4,13 @@
 
 namespace owen2::nnue {
 
-// SFNNv10-class — Owen2 v2 to match Stockfish 18 Jan 31 2026
+// Owen2 v2 feature set: HalfKP + Threat inputs
 // HalfKP + Threat Inputs
 // bucketed king: 4 files mirrored -> 4 buckets, but we keep full 64 for accuracy and bucket at runtime
 // INPUT = HalfKP (40960) + Threat (40960) = 81920
 // H = 1024 (was 256). AVX2/VNNI still fast via int16.
 // Threat: for each piece square, add feature if that square is attacked by opponent.
-// This mirrors SFNNv10 "Threat Inputs" idea: lets net see hanging pieces / tensions.
+// Threat inputs let the net see hanging pieces / tensions.
 
 constexpr int HIDDEN_SIZE = 1024;
 constexpr int HALFKP_SIZE = 40960; // 64*64*10

@@ -1,13 +1,14 @@
 #pragma once
 #include "types.h"
 #include <array>
+#include <bit>
 
 namespace owen2 {
 
-// Bitboard utilities
-inline int popcount(Bitboard b){ return __builtin_popcountll(b); }
-inline Square lsb(Bitboard b){ return Square(__builtin_ctzll(b)); }
-inline Square msb(Bitboard b){ return Square(63 - __builtin_clzll(b)); }
+// Bitboard utilities (C++20 <bit>: portable across GCC/Clang/MSVC)
+inline int popcount(Bitboard b){ return std::popcount(b); }
+inline Square lsb(Bitboard b){ return Square(std::countr_zero(b)); }
+inline Square msb(Bitboard b){ return Square(63 - std::countl_zero(b)); }
 inline Square pop_lsb(Bitboard &b){
     Square s = lsb(b); b &= b-1; return s;
 }

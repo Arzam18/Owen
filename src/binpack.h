@@ -1,23 +1,25 @@
 #pragma once
-// binpack.h — clean-room implementation of the STOCKFISH-ECOSYSTEM ".binpack"
-// training-data BYTE FORMAT (see official-stockfish/Stockfish tools branch,
-// docs/binpack.md) for Owen's OWN self-play games.
+// binpack.h — clean-room implementation of the open ".binpack"
+// training-data container byte format (chunked "BINP" blocks,
+// stem+movetext) for Owen's OWN self-play games.
 //
-// *** No Stockfish code, weights, or data are used or copied here — only the
-// *** documented container format, so Owen's self-play can be stored, merged,
-// *** shuffled and inspected with ecosystem-compatible tooling. ***
+// *** No third-party engine code, weights, or data are used or copied
+// *** here — only the documented container layout, so Owen's self-play
+// *** can be stored, merged, shuffled and inspected with compatible
+// *** tooling. ***
 //
 // Contents:
 //   BinpackWriter  games -> .binpack  (chunked "BINP" blocks, stem+movetext)
 //   BinpackReader  .binpack -> decoded positions (for 71B sdata conversion)
 //
-// Conventions (match the ecosystem spec):
+// Conventions (match the published spec):
 //   score  : int16 centipawns, side-to-move perspective, per position
 //   result : -1/0/+1 from the side-to-move perspective at that position
 //   ply    : absolute game halfmove ply
 //   rule50 : halfmove clock
 
 #include "types.h"
+#include <bit>
 #include "position.h"
 #include "bitboard.h"
 
@@ -49,7 +51,7 @@ inline std::int16_t unsignedToSigned(std::uint16_t r) {
 }
 
 // ── bit helpers ──────────────────────────────────────────────────────────────
-inline int usedBits(std::uint64_t x) { return x == 0 ? 0 : (64 - __builtin_clzll(x)); }
+inline int usedBits(std::uint64_t x) { return x == 0 ? 0 : (64 - std::countl_zero(x)); }
 inline int usedBitsSafe(std::size_t v) { return v == 0 ? 0 : usedBits((std::uint64_t)v - 1); }
 inline owen2::Bitboard belowMask(int sq) { return sq <= 0 ? 0ULL : ((sq >= 64) ? ~0ULL : ((1ULL << sq) - 1)); }
 
