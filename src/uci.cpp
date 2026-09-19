@@ -78,8 +78,11 @@ static void emit_final_info(const search::SearchResult& res){
     }
     os << " nodes " << (unsigned long long)res.nodes
        << " nps " << nps << " time " << (long long)res.time_ms;
+    // Single-move PV only for non-mate scores: game managers reject a
+    // mate claim backed by an incomplete PV ("Incomplete mating PV").
     std::string bm = move_to_uci(res.bestMove);
-    if(!bm.empty() && res.bestMove != 0) os << " pv " << bm;
+    if(!is_mate_score(res.score) && !bm.empty() && res.bestMove != 0)
+        os << " pv " << bm;
     safePrint(os.str());
 }
 
