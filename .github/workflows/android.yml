@@ -25,8 +25,7 @@ jobs:
       - name: Download NNUE Net File
         run: |
           mkdir -p nets
-          # Replace the URL below with your actual .o2nn download link
-          curl -L -o nets/o2-final.o2nn "https://github.com/Arzam18/Owen/releases/download/v0.1.0/o2-final.o2nn"
+          curl -fL -o nets/owen2-v14.o2nn "https://github.com/Owen-Foundation/Owen/releases/download/v2.1.0/owen2-v14.o2nn"
 
       - name: Configure CMake (Android ARM64 with Embedded Net)
         run: |
@@ -36,7 +35,7 @@ jobs:
             -DANDROID_PLATFORM=android-24 \
             -DCMAKE_BUILD_TYPE=Release \
             -DOWEN_EMBED_NET=ON \
-            -DOWEN_EMBED_NET_PATH="nets/o2-final.o2nn"
+            -DOWEN_EMBED_NET_PATH="nets/owen2-v14.o2nn"
 
       - name: Build Android Binary
         run: cmake --build build-android -j$(nproc)
