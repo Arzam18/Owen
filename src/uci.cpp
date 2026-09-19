@@ -61,6 +61,28 @@ static void safePrint(const std::string& s){
     std::cout << s << "\n" << std::flush;
 }
 
+// Standard search summary for GUIs and game managers (fastchess extracts
+// the score from the last info line). Emitted once per search, just before
+// bestmove. Score is side-to-move centipawns; mates use UCI mate-in-N.
+static void emit_final_info(const search::SearchResult& res){
+    long long ms = res.time_ms > 0 ? (long long)res.time_ms : 1;
+    long long nps = (long long)res.nodes * 1000LL / ms;
+    std::ostringstream os;
+    os << "info depth " << res.depth << " seldepth " << res.depth;
+    if(is_mate_score(res.score)){
+        int ply = VALUE_MATE - std::abs(res.score);
+        int moves = (ply + 1) / 2;
+        os << " score mate " << (res.score > 0 ? moves : -moves);
+    } else {
+        os << " score cp " << res.score;
+    }
+    os << " nodes " << (unsigned long long)res.nodes
+       << " nps " << nps << " time " << (long long)res.time_ms;
+    std::string bm = move_to_uci(res.bestMove);
+    if(!bm.empty() && res.bestMove != 0) os << " pv " << bm;
+    safePrint(os.str());
+}
+
 // ── UCI options registry ──────────────────────────────────────────
 // Typed registry: GUIs (Knights/Cutechess/Arena) query these to build UI.
 // Every advertised option is actually implemented in apply_setoption.
@@ -416,6 +438,7 @@ static void start_search(const search::SearchLimits& lim){
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             if(g_pondering.load()){
                 // stop while pondering without ponderhit
+                emit_final_info(res);
                 std::lock_guard<std::mutex> lk(g_outMu);
                 std::cout << "bestmove " << move_to_uci(res.bestMove) << "\n" << std::flush;
                 g_searching.store(false);
@@ -424,6 +447,8 @@ static void start_search(const search::SearchLimits& lim){
             // ponderhit: bestmove already determined; fall through to emit it
         }
         {
+            // Final search summary first (own lock inside), then bestmove.
+            emit_final_info(res);
             std::lock_guard<std::mutex> lk(g_outMu);
             // Guarantee exactly one bestmove — never "bestmove (none)" unless truly no legal moves.
             std::string bm = move_to_uci(res.bestMove);
