@@ -8,7 +8,7 @@ on:
         default: "https://github.com/Owen-Foundation/Owen/releases/download/v2.1.0/owen2-v14.o2nn"
         required: false
   push:
-    branches: [main]
+    branches: [main, v2.0.0]
 
 jobs:
   build:
@@ -19,7 +19,7 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-22.04
             tag: linux-x86_64
-            cmake: -DOWEN_NATIVE=OFF
+            cmake: -DOWEN_NATIVE=OFF -DOWEN_AVX2=ON
           - name: linux-arm64
             os: ubuntu-22.04-arm
             tag: linux-arm64
@@ -31,11 +31,11 @@ jobs:
           - name: darwin-x86_64 (Intel Macs)
             os: macos-15-intel
             tag: darwin-x86_64
-            cmake: -DOWEN_NATIVE=OFF
+            cmake: -DOWEN_NATIVE=OFF -DOWEN_AVX2=ON
           - name: windows-x86_64
             os: windows-2022
             tag: windows-x86_64
-            cmake: -DOWEN_NATIVE=OFF
+            cmake: -DOWEN_NATIVE=OFF -DOWEN_AVX2=ON
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -78,6 +78,22 @@ jobs:
         run: |
           mkdir dist
           copy "build\Release\owen2.exe" "dist\owen2-${{ matrix.tag }}.exe"
+
+      - name: smoke test (bench signature, unix)
+        if: runner.os != 'Windows' && hashFiles('nets/baked.o2nn') != ''
+        timeout-minutes: 15
+        run: |
+          ./dist/owen2-${{ matrix.tag }} bench 6 | tee bench.log
+          grep -q "nodes 32000" bench.log && grep -q "bestmove e2e4" bench.log
+
+      - name: smoke test (bench signature, windows)
+        if: runner.os == 'Windows' && hashFiles('nets/baked.o2nn') != ''
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          .\dist\owen2-${{ matrix.tag }}.exe bench 6 | Tee-Object bench.log
+          if (-not (Select-String -Path bench.log -Pattern "nodes 32000" -Quiet)) { exit 1 }
+          if (-not (Select-String -Path bench.log -Pattern "bestmove e2e4" -Quiet)) { exit 1 }
 
       - name: upload artifact
         uses: actions/upload-artifact@v4
