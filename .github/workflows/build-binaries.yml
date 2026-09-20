@@ -36,10 +36,32 @@ jobs:
             os: windows-2022
             tag: windows-x86_64
             cmake: -DOWEN_NATIVE=OFF -DOWEN_AVX2=ON
+          - name: windows-arm64
+            os: windows-11-arm
+            tag: windows-arm64
+            cmake: -DOWEN_NATIVE=OFF
+          - name: linux-riscv64 (cross + qemu)
+            os: ubuntu-22.04
+            tag: linux-riscv64
+            cmake: -DOWEN_NATIVE=OFF -DCMAKE_CXX_COMPILER=riscv64-linux-gnu-g++ -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+            apt: "gcc-riscv64-linux-gnu qemu-user"
+            run_prefix: "qemu-riscv64 -L /usr/riscv64-linux-gnu"
+          - name: linux-arm32 (armv7 cross + qemu)
+            os: ubuntu-22.04
+            tag: linux-arm32
+            cmake: -DOWEN_NATIVE=OFF -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+            apt: "gcc-arm-linux-gnueabihf qemu-user"
+            run_prefix: "qemu-arm -L /usr/arm-linux-gnueabihf"
 
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: install cross toolchain (if needed)
+        if: matrix.apt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ${{ matrix.apt }}
 
       - name: fetch net (bake into binary)
         shell: bash
@@ -81,9 +103,9 @@ jobs:
 
       - name: smoke test (bench signature, unix)
         if: runner.os != 'Windows' && hashFiles('nets/baked.o2nn') != ''
-        timeout-minutes: 15
+        timeout-minutes: 40
         run: |
-          ./dist/owen2-${{ matrix.tag }} bench 6 | tee bench.log
+          ${{ matrix.run_prefix }} ./dist/owen2-${{ matrix.tag }} bench 6 | tee bench.log
           grep -q "nodes 32000" bench.log && grep -q "bestmove e2e4" bench.log
 
       - name: smoke test (bench signature, windows)
