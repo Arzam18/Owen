@@ -63,7 +63,7 @@
           <ul class="chips" aria-label="Highlights">
             <li>NNUE · HalfKP + Threat</li>
             <li>Best-first search</li>
-            <li>Windows · Linux · macOS · ARM</li>
+            <li>Windows · Linux · macOS · Android · ARM</li>
           </ul>
         </div>
 
@@ -79,7 +79,7 @@ option name MTS_C type string default 1.35
 uciok
 <span class="t-out">o2 &gt; setoption name Threads value 8</span>
 <span class="t-out">o2 &gt; go depth 22</span>
-info depth 22 nodes 1483921 nps 1124005
+info depth 31 seldepth 31 score cp 12 nodes 1483921 nps 1124005 time 1319 pv e2e4
 bestmove e2e4 ponder c7c5</code></pre>
         </div>
       </div>
@@ -90,7 +90,7 @@ bestmove e2e4 ponder c7c5</code></pre>
         <div><strong>From scratch</strong><span>Every line original</span></div>
         <div><strong>NNUE</strong><span>HalfKP + Threat</span></div>
         <div><strong>Marrow Tree</strong><span>Best-first search</span></div>
-        <div><strong>Portable</strong><span>4 OS · 2 arch</span></div>
+        <div><strong>Portable</strong><span>5 platforms · 7 binaries</span></div>
       </div>
     </section>
 
@@ -240,7 +240,7 @@ cmake --build build -j
             open distributed test framework that runs those games — and it needs volunteers.
           </p>
           <ul class="checks">
-            <li>Donate spare CPU time and get credited on the leaderboard</li>
+            <li>Accounts approved instantly — contribute in minutes, not days</li>
             <li>Automatic updates, native Windows/Linux/macOS workers</li>
             <li>Results stream straight back to the project — no manual uploads</li>
           </ul>
