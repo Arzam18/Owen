@@ -5,6 +5,8 @@
 #include <limits>
 #include <random>
 
+// TEMP-PROFILE counters
+
 namespace owen2::search {
 
 // Static members for fast log table.
@@ -279,6 +281,8 @@ void MarrowTree::select_path(Position& pos, std::vector<MarrowNode*>& path){
     }
 }
 
+
+
 Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
     // Capture-only negamax with stand-pat. Fixes the no-quiescence horizon
     // blindness: hanging pieces / recaptures are resolved before the NNUE
@@ -356,7 +360,10 @@ Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
     }
     // Checks in quiet positions: after captures, search quiet moves that give
     // check (discovered attacks, skewers, pins). Only 1 ply ahead to stay cheap.
-    if(depth > 1){
+    // Futility gate: when stand-pat trails alpha by more than a queen, quiet
+    // checks essentially never overturn the bound (mates are still proven via
+    // evasions and deeper levels) — skip the full legal movegen entirely.
+    if(depth > 1 && stand + 900 + DELTA_MARGIN >= (int)alpha){
         Move qlist[kMaxMoves];
         int nq = generate_legal_buf(qscratch_[qslot], pos, qlist, kMaxMoves);
         for(int i=0;i<nq;++i){
