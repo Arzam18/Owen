@@ -20,6 +20,8 @@ static bool embedded_net_bytes(const unsigned char*& data, size_t& sz){
 }
 #else
 // Unix: the net lives in a .incbin translation unit (see embedded_net.cpp).
+#include <unistd.h>
+#include <cstdlib>
 extern const unsigned char g_embedded_net[];
 extern const unsigned char g_embedded_net_end[];
 static bool embedded_net_bytes(const unsigned char*& data, size_t& sz){
@@ -31,13 +33,29 @@ static bool embedded_net_bytes(const unsigned char*& data, size_t& sz){
 static void load_embedded_net(){
     const unsigned char* data = nullptr;
     size_t sz = 0;
-    if(!embedded_net_bytes(data, sz))
+    if(!embedded_net_bytes(data, sz)) {
         std::cerr << "info string Owen 2 embedded net unavailable\n";
-    else if(sz >= 8 && data[0]=='O' && data[1]=='2' && data[2]=='N' && data[3]=='N'){
+        return;
+    }
+    if(sz >= 4 && data[0]=='O' && data[1]=='2' && data[2]=='N' && data[3]=='N'){
         if(owen2::nnue::g_network.load_from_memory(data, sz))
             std::cerr << "info string Owen 2 embedded net loaded (" << sz << " bytes)\n";
         else
             std::cerr << "info string Owen 2 embedded net FAILED to load\n";
+    } else if (sz >= 12) {
+        char tmp_path[] = "/tmp/owen_embedded_net_XXXXXX";
+        int fd = mkstemp(tmp_path);
+        if (fd >= 0) {
+            ssize_t written = write(fd, data, sz);
+            close(fd);
+            if (written == (ssize_t)sz && owen2::nnue::g_network.load(tmp_path)) {
+                std::cerr << "info string Owen 2 embedded SF-NNUE net loaded (" << sz << " bytes)\n";
+                unlink(tmp_path);
+                return;
+            }
+            unlink(tmp_path);
+        }
+        std::cerr << "info string Owen 2 embedded net FAILED to load\n";
     } else {
         std::cerr << "info string Owen 2 embedded net has bad magic\n";
     }
