@@ -319,26 +319,34 @@ Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
     if(nlegal==0) return Value(stand);
     // Order captures by SEE (exact swap, not MVV-LVA); delta-prune captures
     // that cannot reach alpha even in the best case. Stack-resident (no heap).
+    // SEE runs only on delta survivors: the prune decision uses just
+    // stand/vmax/alpha, so pre-filtering with entry alpha skips swap sims
+    // for free (the per-move check below re-prunes exactly as before).
     static const int pval[6] = {100,320,330,500,900,800};
-    struct CM { Move m; int see; int vmax; };
+    static const int DELTA_MARGIN = 200;
+    struct CM { Move m; int see; };
     CM caps[kMaxMoves];
     int ncaps = 0;
     for(int i=0;i<nlegal;++i){
         Move m = clist[i];
         if(!is_capture(m) && !is_promo(m)) continue;
-        int sv = see(pos, m);
         Piece victim = pos.piece_on(move_to(m));
         int vv = (victim == NO_PIECE) ? 0 : pval[type_of(victim)];
         if(is_promo(m)) vv += 700; // near-queen value, promotion upside
-        caps[ncaps++] = {m, sv, vv};
+        if(stand + vv + DELTA_MARGIN < (int)alpha) continue;
+        caps[ncaps++] = {m, see(pos, m)};
     }
     std::sort(caps, caps+ncaps, [](auto& a, auto& b){ return a.see > b.see; });
-    static const int DELTA_MARGIN = 200;
     Value best = Value(stand);
     for(int i=0;i<ncaps;++i){
         auto& cm = caps[i];
         // Delta pruning: stand-pat + best-case swing + margin can't hit alpha.
-        if(stand + cm.vmax + DELTA_MARGIN < (int)alpha) continue;
+        // (Re-check against live alpha; entry-alpha pre-filter above only
+        // skipped swap simulations, never searches.)
+        Piece victim = pos.piece_on(move_to(cm.m));
+        int vv = (victim == NO_PIECE) ? 0 : pval[type_of(victim)];
+        if(is_promo(cm.m)) vv += 700;
+        if(stand + vv + DELTA_MARGIN < (int)alpha) continue;
         pos.do_move(cm.m);
         Value v = Value(-quiescence(pos, Value(-beta), Value(-alpha), depth - 1));
         pos.undo_move(cm.m);

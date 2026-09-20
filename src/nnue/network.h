@@ -37,6 +37,9 @@ struct Network {
     bool save(const std::string& path) const;
     int evaluate(const Position& pos) const;
     int evaluate(const Position& pos, Accumulator& acc) const;
+    // Evaluate from a caller-maintained accumulator (incremental search):
+    // no refresh, just the forward pass on the side-to-move half.
+    int evaluate_acc(const Position& pos, const Accumulator& acc) const;
     int evaluate_handcrafted(const Position& pos) const;
     // policy logit for one owen-form move (call per legal move, then softmax in search)
     static int policy_index(Move m);

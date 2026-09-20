@@ -87,5 +87,8 @@ int main(){
         }
     }
     std::cout<<"captures tests passed\n";
+    extern int test_incremental_main();
+    int rc_inc = test_incremental_main();
+    if (rc_inc != 0) return rc_inc;
     return 0;
 }
