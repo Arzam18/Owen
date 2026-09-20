@@ -1,4 +1,5 @@
 #include "network.h"
+#include "sf_bridge.h"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -143,6 +144,7 @@ float Network::policy_logit(const std::array<int16_t,L2>& l2, int polIdx) const 
 }
 
 int Network::evaluate(const Position& pos, Accumulator& acc) const {
+    if(is_sf_net) return sf_nnue::evaluate(pos);
     if(!loaded) return evaluate_handcrafted(pos);
     refresh_accumulator(pos, acc, feature_weights.data());
     const auto& a = (pos.side_to_move()==WHITE) ? acc.white : acc.black;
@@ -151,6 +153,7 @@ int Network::evaluate(const Position& pos, Accumulator& acc) const {
     return v;
 }
 int Network::evaluate_acc(const Position& pos, const Accumulator& acc) const {
+    if(is_sf_net) return sf_nnue::evaluate(pos);
     if(!loaded) return evaluate_handcrafted(pos);
     const auto& a = (pos.side_to_move()==WHITE) ? acc.white : acc.black;
     int v = forward(a);
@@ -158,6 +161,7 @@ int Network::evaluate_acc(const Position& pos, const Accumulator& acc) const {
     return v;
 }
 int Network::evaluate(const Position& pos) const {
+    if(is_sf_net) return sf_nnue::evaluate(pos);
     if(!loaded) return evaluate_handcrafted(pos);
     Accumulator acc{};
     refresh_accumulator(pos, acc, feature_weights.data());
@@ -235,10 +239,18 @@ int Network::evaluate_handcrafted(const Position& pos) const {
 }
 
 bool Network::load(const std::string& path){
+    if(sf_nnue::load_sf_net(path)) {
+        loaded = true;
+        is_sf_net = true;
+        has_policy = false;
+        return true;
+    }
     std::ifstream f(path, std::ios::binary);
     if(!f) return false;
     std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    return load_from_memory(buf.data(), buf.size());
+    bool ok = load_from_memory(buf.data(), buf.size());
+    if(ok) is_sf_net = false;
+    return ok;
 }
 bool Network::load_from_memory(const unsigned char* data, size_t size){
     if(size < 12) return false;

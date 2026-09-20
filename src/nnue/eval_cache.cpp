@@ -9,10 +9,7 @@ void EvalCache::resize(size_t entries_pow2) {
 }
 
 void EvalCache::clear() {
-    for (int s = 0; s < kShards; ++s) {
-        std::lock_guard<std::mutex> lk(mu_[s]);
-        for (size_t i = s; i < table_.size(); i += kShards) table_[i] = {};
-    }
+    for (auto& e : table_) e = {};
     hits_.store(0);
     misses_.store(0);
 }
@@ -20,7 +17,6 @@ void EvalCache::clear() {
 bool EvalCache::probe(uint64_t key, int& value) const {
     if (table_.empty() || key == 0) return false;
     size_t idx = (key ^ (key >> 32)) & mask_;
-    std::lock_guard<std::mutex> lk(mu_[idx % kShards]);
     const Entry& e = table_[idx];
     if (e.key == key) {
         value = e.value;
@@ -36,7 +32,6 @@ void EvalCache::store(uint64_t key, int value) {
     if (value > 15000) value = 15000;
     if (value < -15000) value = -15000;
     size_t idx = (key ^ (key >> 32)) & mask_;
-    std::lock_guard<std::mutex> lk(mu_[idx % kShards]);
     Entry& e = table_[idx];
     e.key = key;
     e.value = int16_t(value);

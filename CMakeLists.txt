@@ -57,6 +57,7 @@ file(GLOB CORE_SRC
   src/nnue/features.cpp
   src/nnue/network.cpp
   src/nnue/eval_cache.cpp
+  src/nnue/sf_bridge.cpp
   src/search/tt.cpp
   src/search/see.cpp
   src/search/marrow.cpp
@@ -64,11 +65,11 @@ file(GLOB CORE_SRC
   src/uci.cpp
 )
 add_library(owen2_core STATIC ${CORE_SRC})
-target_include_directories(owen2_core PUBLIC src)
+target_include_directories(owen2_core PUBLIC src /home/hemesh/sf-src/src)
 # portable threading: Threads::Threads maps to pthread on Unix, handles
 # Windows Win32 threads automatically (no explicit -lpthread needed).
 find_package(Threads REQUIRED)
-target_link_libraries(owen2_core PUBLIC Threads::Threads)
+target_link_libraries(owen2_core PUBLIC Threads::Threads /home/hemesh/sf-build/libstockfish.a)
 
 # ── main engine ───────────────────────────────────────────────────
 # ── bake net into the engine when requested ──────
