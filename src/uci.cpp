@@ -175,6 +175,9 @@ static void apply_setoption(const std::string& line){
     } else if(lname=="nnuefile"){
         std::string path=value;
         if(path.empty()){ log_info("NNUEFile needs a path"); return; }
+        // Evaluations change with the net: drop TT values and both eval
+        // caches so nothing stale survives the switch.
+        g_searcher.new_game();
         if(!nnue::g_network.load(path))
             log_info("NNUE load failed: " + path + " (using handcrafted eval)");
         else

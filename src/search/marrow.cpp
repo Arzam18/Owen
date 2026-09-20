@@ -5,6 +5,8 @@
 #include <limits>
 #include <random>
 
+// TEMP-PROFILE counters
+
 namespace owen2::search {
 
 // Static members for fast log table.
@@ -279,6 +281,8 @@ void MarrowTree::select_path(Position& pos, std::vector<MarrowNode*>& path){
     }
 }
 
+
+
 Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
     // Capture-only negamax with stand-pat. Fixes the no-quiescence horizon
     // blindness: hanging pieces / recaptures are resolved before the NNUE
@@ -319,26 +323,34 @@ Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
     if(nlegal==0) return Value(stand);
     // Order captures by SEE (exact swap, not MVV-LVA); delta-prune captures
     // that cannot reach alpha even in the best case. Stack-resident (no heap).
+    // SEE runs only on delta survivors: the prune decision uses just
+    // stand/vmax/alpha, so pre-filtering with entry alpha skips swap sims
+    // for free (the per-move check below re-prunes exactly as before).
     static const int pval[6] = {100,320,330,500,900,800};
-    struct CM { Move m; int see; int vmax; };
+    static const int DELTA_MARGIN = 200;
+    struct CM { Move m; int see; };
     CM caps[kMaxMoves];
     int ncaps = 0;
     for(int i=0;i<nlegal;++i){
         Move m = clist[i];
         if(!is_capture(m) && !is_promo(m)) continue;
-        int sv = see(pos, m);
         Piece victim = pos.piece_on(move_to(m));
         int vv = (victim == NO_PIECE) ? 0 : pval[type_of(victim)];
         if(is_promo(m)) vv += 700; // near-queen value, promotion upside
-        caps[ncaps++] = {m, sv, vv};
+        if(stand + vv + DELTA_MARGIN < (int)alpha) continue;
+        caps[ncaps++] = {m, see(pos, m)};
     }
     std::sort(caps, caps+ncaps, [](auto& a, auto& b){ return a.see > b.see; });
-    static const int DELTA_MARGIN = 200;
     Value best = Value(stand);
     for(int i=0;i<ncaps;++i){
         auto& cm = caps[i];
         // Delta pruning: stand-pat + best-case swing + margin can't hit alpha.
-        if(stand + cm.vmax + DELTA_MARGIN < (int)alpha) continue;
+        // (Re-check against live alpha; entry-alpha pre-filter above only
+        // skipped swap simulations, never searches.)
+        Piece victim = pos.piece_on(move_to(cm.m));
+        int vv = (victim == NO_PIECE) ? 0 : pval[type_of(victim)];
+        if(is_promo(cm.m)) vv += 700;
+        if(stand + vv + DELTA_MARGIN < (int)alpha) continue;
         pos.do_move(cm.m);
         Value v = Value(-quiescence(pos, Value(-beta), Value(-alpha), depth - 1));
         pos.undo_move(cm.m);
@@ -348,7 +360,10 @@ Value MarrowTree::quiescence(Position& pos, Value alpha, Value beta, int depth){
     }
     // Checks in quiet positions: after captures, search quiet moves that give
     // check (discovered attacks, skewers, pins). Only 1 ply ahead to stay cheap.
-    if(depth > 1){
+    // Futility gate: when stand-pat trails alpha by more than a queen, quiet
+    // checks essentially never overturn the bound (mates are still proven via
+    // evasions and deeper levels) — skip the full legal movegen entirely.
+    if(depth > 1 && stand + 900 + DELTA_MARGIN >= (int)alpha){
         Move qlist[kMaxMoves];
         int nq = generate_legal_buf(qscratch_[qslot], pos, qlist, kMaxMoves);
         for(int i=0;i<nq;++i){

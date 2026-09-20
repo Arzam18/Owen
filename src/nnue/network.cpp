@@ -5,6 +5,8 @@
 #include <cstring>
 #if defined(__AVX2__)
 #include <immintrin.h>
+#elif defined(__ARM_NEON)
+#include <arm_neon.h>
 #endif
 
 namespace owen2::nnue {
@@ -37,6 +39,28 @@ inline int32_t dot_u8_s8_avx2(const int8_t* a, const int8_t* b, int n) {
 }
 #endif
 
+#if defined(__ARM_NEON)
+// Dot product: a = uint8 (0..127 stored as int8), b = int8.
+// Signed 8x8 -> 16 widening multiply, pairwise-accumulated to int32.
+// Exact integer math: identical totals to the scalar loop.
+inline int32_t dot_u8_s8_neon(const int8_t* a, const int8_t* b, int n) {
+    int32x4_t acc = vdupq_n_s32(0);
+    int i = 0;
+    for (; i + 16 <= n; i += 16) {
+        int8x16_t va = vld1q_s8(a + i);
+        int8x16_t vb = vld1q_s8(b + i);
+        int16x8_t lo = vmull_s8(vget_low_s8(va), vget_low_s8(vb));
+        int16x8_t hi = vmull_s8(vget_high_s8(va), vget_high_s8(vb));
+        acc = vpadalq_s16(acc, lo);
+        acc = vpadalq_s16(acc, hi);
+    }
+    int32x2_t s2 = vadd_s32(vget_low_s32(acc), vget_high_s32(acc));
+    int32_t total = vget_lane_s32(vpadd_s32(s2, s2), 0);
+    for (; i < n; ++i) total += (int32_t)a[i] * (int32_t)b[i];
+    return total;
+}
+#endif
+
 int Network::forward(const std::array<int16_t,H>& acc) const {
     std::array<int8_t, H> h0{};
     for(int i=0;i<H;++i){
@@ -51,6 +75,8 @@ int Network::forward(const std::array<int16_t,H>& acc) const {
         int32_t s = l1_bias[o];
 #if defined(__AVX2__)
         s += dot_u8_s8_avx2(h0.data(), (const int8_t*)&l1_weights[o*H], H);
+#elif defined(__ARM_NEON)
+        s += dot_u8_s8_neon(h0.data(), (const int8_t*)&l1_weights[o*H], H);
 #else
         for(int i=0;i<H;++i) s += (int32_t)h0[i] * (int32_t)l1_weights[o*H + i];
 #endif
@@ -89,6 +115,8 @@ void Network::hidden_l2(const std::array<int16_t,H>& acc, std::array<int16_t,L2>
         int32_t s = l1_bias[o];
 #if defined(__AVX2__)
         s += dot_u8_s8_avx2(h0.data(), (const int8_t*)&l1_weights[o*H], H);
+#elif defined(__ARM_NEON)
+        s += dot_u8_s8_neon(h0.data(), (const int8_t*)&l1_weights[o*H], H);
 #else
         for(int i=0;i<H;++i) s += (int32_t)h0[i] * (int32_t)l1_weights[o*H + i];
 #endif
@@ -117,6 +145,13 @@ float Network::policy_logit(const std::array<int16_t,L2>& l2, int polIdx) const 
 int Network::evaluate(const Position& pos, Accumulator& acc) const {
     if(!loaded) return evaluate_handcrafted(pos);
     refresh_accumulator(pos, acc, feature_weights.data());
+    const auto& a = (pos.side_to_move()==WHITE) ? acc.white : acc.black;
+    int v = forward(a);
+    if(v > 15000) v=15000; if(v < -15000) v=-15000;
+    return v;
+}
+int Network::evaluate_acc(const Position& pos, const Accumulator& acc) const {
+    if(!loaded) return evaluate_handcrafted(pos);
     const auto& a = (pos.side_to_move()==WHITE) ? acc.white : acc.black;
     int v = forward(a);
     if(v > 15000) v=15000; if(v < -15000) v=-15000;

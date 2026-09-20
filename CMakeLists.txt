@@ -15,6 +15,24 @@ if(MSVC)
 else()
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
+
+# 32-bit targets (ARMv7 and friends) often lack inline 64-bit atomics
+# (used for eval-cache counters): link libatomic when the toolchain
+# cannot do them on its own. Compile+link check only, never runs code.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_QUIET TRUE)
+check_cxx_source_compiles("
+#include <atomic>
+#include <cstdint>
+int main() {
+  std::atomic<uint64_t> a{0};
+  a.fetch_add(1);
+  return (int)a.load();
+}" OWEN_ATOMIC64_OK)
+if(NOT OWEN_ATOMIC64_OK)
+  message(STATUS "64-bit atomics need libatomic; linking it")
+  link_libraries(atomic)
+endif()
 if(OWEN_NATIVE)
   if(MSVC)
     add_compile_options(/arch:AVX2)
