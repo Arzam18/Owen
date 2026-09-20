@@ -40,30 +40,10 @@ jobs:
             os: windows-11-arm
             tag: windows-arm64
             cmake: -DOWEN_NATIVE=OFF
-          - name: linux-riscv64 (cross + qemu)
-            os: ubuntu-22.04
-            tag: linux-riscv64
-            cmake: -DOWEN_NATIVE=OFF -DCMAKE_CXX_COMPILER=/usr/bin/riscv64-linux-gnu-g++ -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
-            apt: "gcc-riscv64-linux-gnu qemu-user"
-            run_prefix: "qemu-riscv64 -L /usr/riscv64-linux-gnu"
-          - name: linux-arm32 (armv7 cross + qemu)
-            os: ubuntu-22.04
-            tag: linux-arm32
-            cmake: -DOWEN_NATIVE=OFF -DCMAKE_CXX_COMPILER=/usr/bin/arm-linux-gnueabihf-g++ -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
-            apt: "gcc-arm-linux-gnueabihf qemu-user"
-            run_prefix: "qemu-arm -L /usr/arm-linux-gnueabihf"
 
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: install cross toolchain (if needed)
-        if: matrix.apt
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ${{ matrix.apt }}
-          echo "PATH=$PATH"
-          ls -la /usr/bin/*-linux-gnu-g++ 2>/dev/null || echo "NO cross g++ in /usr/bin"
 
       - name: fetch net (bake into binary)
         shell: bash
