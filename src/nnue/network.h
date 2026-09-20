@@ -32,6 +32,7 @@ struct Network {
     std::vector<int16_t> pol_bias;     // v3: NPOL
     bool loaded=false;
     bool has_policy=false;
+    bool is_sf_net=false;
     bool load(const std::string& path);
     bool load_from_memory(const unsigned char* data, size_t size);
     bool save(const std::string& path) const;
